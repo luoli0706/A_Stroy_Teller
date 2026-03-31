@@ -1,14 +1,40 @@
+import argparse
+
 from app.graph import build_graph
+from app.llm_client import get_story_client
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run A Story Teller graph")
+    parser.add_argument("--story-id", default="urban_detective")
+    parser.add_argument("--topic", default="a traveler finding a hidden library")
+    parser.add_argument("--style", default="adventurous")
+    parser.add_argument(
+        "--roles",
+        default="Reshaely,VanlyShan,SolinXuan",
+        help="Comma-separated role IDs",
+    )
+    parser.add_argument("--max-retry", type=int, default=1)
+    return parser.parse_args()
 
 
 def main() -> None:
+    args = parse_args()
+    roles = [item.strip() for item in args.roles.split(",") if item.strip()]
+
+    health = get_story_client().health_check()
+    if not health.ok:
+        raise SystemExit(f"Startup health check failed: {health.message}")
+
     graph = build_graph()
 
     result = graph.invoke(
         {
-            "topic": "a traveler finding a hidden library",
-            "style": "adventurous",
-            "roles": ["alice", "bob"],
+            "story_id": args.story_id,
+            "topic": args.topic,
+            "style": args.style,
+            "roles": roles,
+            "max_retry": args.max_retry,
         }
     )
 

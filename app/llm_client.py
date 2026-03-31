@@ -1,5 +1,9 @@
 import os
+from dataclasses import dataclass
 from functools import lru_cache
+import json
+from urllib.error import URLError
+from urllib.request import urlopen
 
 from dotenv import load_dotenv
 from langchain_ollama import ChatOllama
@@ -7,6 +11,12 @@ from langchain_ollama import ChatOllama
 
 DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 DEFAULT_MODEL = "Qwen3.5:9b"
+
+
+@dataclass(frozen=True)
+class HealthCheckResult:
+    ok: bool
+    message: str
 
 
 class OllamaStoryClient:
@@ -18,6 +28,57 @@ class OllamaStoryClient:
         self.model_integrator = os.getenv("OLLAMA_MODEL_INTEGRATOR", DEFAULT_MODEL)
         self.model_quality = os.getenv("OLLAMA_MODEL_QUALITY", self.model_integrator)
         self.temperature = float(os.getenv("OLLAMA_TEMPERATURE", "0.7"))
+
+    def _list_available_models(self) -> list[str]:
+        tags_url = self.base_url.rstrip("/") + "/api/tags"
+        with urlopen(tags_url, timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+
+        names: list[str] = []
+        for model in payload.get("models", []):
+            model_name = str(model.get("model", "")).strip()
+            if model_name:
+                names.append(model_name)
+        return names
+
+    def health_check(self) -> HealthCheckResult:
+        required = {
+            self.model_planner,
+            self.model_role,
+            self.model_integrator,
+            self.model_quality,
+        }
+        try:
+            available_models = self._list_available_models()
+        except URLError:
+            return HealthCheckResult(
+                ok=False,
+                message=(
+                    "Ollama service is unreachable. "
+                    f"Check OLLAMA_BASE_URL={self.base_url} and ensure Ollama is running."
+                ),
+            )
+        except Exception as exc:
+            return HealthCheckResult(ok=False, message=f"Failed to query Ollama tags: {exc}")
+
+        missing = sorted(model for model in required if model not in available_models)
+        if missing:
+            return HealthCheckResult(
+                ok=False,
+                message=(
+                    "Missing Ollama models: "
+                    + ", ".join(missing)
+                    + ". Pull them first, for example: ollama pull "
+                    + missing[0]
+                ),
+            )
+
+        return HealthCheckResult(ok=True, message="Ollama health check passed.")
+
+    def assert_ready(self) -> None:
+        result = self.health_check()
+        if not result.ok:
+            raise RuntimeError(result.message)
 
     def _chat(self, model: str, prompt: str, temperature: float | None = None) -> str:
         llm = ChatOllama(
@@ -31,13 +92,20 @@ class OllamaStoryClient:
             return "\n".join(str(part) for part in content).strip()
         return str(content).strip()
 
-    def plan_global_story(self, topic: str, style: str, role_ids: list[str]) -> str:
+    def plan_global_story(
+        self,
+        topic: str,
+        style: str,
+        role_ids: list[str],
+        framework: str,
+    ) -> str:
         prompt = (
             "You are a story planner. Build a concise 3-act outline with timeline beats. "
             "Keep it coherent for all roles.\n\n"
             f"Topic: {topic}\n"
             f"Style: {style}\n"
             f"Roles: {', '.join(role_ids)}\n\n"
+            f"Story framework:\n{framework}\n\n"
             "Output format:\n"
             "- Act 1\n"
             "- Act 2\n"

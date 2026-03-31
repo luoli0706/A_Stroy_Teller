@@ -7,9 +7,13 @@ class RoleAsset(TypedDict):
 
 
 class StoryState(TypedDict, total=False):
+    story_id: str
+    story_framework: str
     topic: str
     style: str
     roles: list[str]
+    retry_count: int
+    max_retry: int
     role_assets: dict[str, RoleAsset]
     global_outline: str
     role_view_drafts: dict[str, str]

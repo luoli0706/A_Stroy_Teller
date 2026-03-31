@@ -15,12 +15,14 @@
 
 ### 2.2 节点调用关系
 
-- `collect_requirements`：读取输入并初始化 SQLite。
+- `collect_requirements`：读取输入、初始化 SQLite，并执行 Ollama 启动健康检查。
+- `load_story_framework`：按 story_id 加载 stories 框架文本。
 - `load_roles`：加载角色 profile/memory 并同步入库。
 - `plan_global_story`：调用 LLM 生成主线。
 - `generate_role_views`：调用 LLM 生成多角色视角文本。
 - `integrate_perspectives`：调用 LLM 生成整合文本。
 - `quality_check`：调用 LLM 输出 PASS/FAIL 质检报告。
+- `quality_check -> generate_role_views`：当 FAIL 且未超过 max_retry 时自动重试。
 - `finalize_output`：落库运行记录并返回 run_id。
 
 ## 3. LLM API
@@ -31,19 +33,27 @@
 
 - 返回：缓存的 `OllamaStoryClient` 单例。
 
-### 3.2 OllamaStoryClient.plan_global_story(topic, style, role_ids)
+### 3.2 OllamaStoryClient.health_check()
 
-- 作用：使用规划模型输出全局故事大纲。
+- 作用：检查 Ollama 服务可达性与配置模型是否已拉取。
 
-### 3.3 OllamaStoryClient.generate_role_view(role_id, profile, memory, outline, style)
+### 3.3 OllamaStoryClient.assert_ready()
+
+- 作用：在启动阶段强制校验，失败时抛出运行时错误。
+
+### 3.4 OllamaStoryClient.plan_global_story(topic, style, role_ids, framework)
+
+- 作用：使用规划模型在指定故事框架约束下输出全局大纲。
+
+### 3.5 OllamaStoryClient.generate_role_view(role_id, profile, memory, outline, style)
 
 - 作用：按角色 profile + memory 生成单角色视角叙述。
 
-### 3.4 OllamaStoryClient.integrate_perspectives(topic, style, role_drafts)
+### 3.6 OllamaStoryClient.integrate_perspectives(topic, style, role_drafts)
 
 - 作用：整合多角色视角为统一故事文本。
 
-### 3.5 OllamaStoryClient.quality_check(outline, integrated_story, role_ids)
+### 3.7 OllamaStoryClient.quality_check(outline, integrated_story, role_ids)
 
 - 作用：输出质量检查报告（PASS/FAIL + 建议）。
 
@@ -124,11 +134,25 @@
 python -m app.main
 ```
 
+参数化运行示例：
+
+```bash
+python -m app.main --story-id urban_detective --topic "midnight archive theft" --style noir --roles "Reshaely,VanlyShan,SolinXuan" --max-retry 2
+```
+
 输出内容：
 
 - 每个角色的视角稿
 - 整合后的故事
 - SQLite 落库后的 run_id 和 db 路径
+
+输入参数可选增加：
+
+- `story_id`：故事框架标识，映射到 `stories/<story_id>/framework.md`。
+- `topic`：故事主题。
+- `style`：叙事风格。
+- `roles`：逗号分隔角色 ID 列表。
+- `max_retry`：质检失败后的最大重试次数。
 
 ## 8. 脚本
 

@@ -7,16 +7,17 @@
 主流程：
 
 1. collect_requirements
-2. load_roles
-3. plan_global_story
-4. generate_role_views
-5. integrate_perspectives
-6. quality_check
-7. finalize_output
+2. load_story_framework
+3. load_roles
+4. plan_global_story
+5. generate_role_views
+6. integrate_perspectives
+7. quality_check
+8. finalize_output
 
 图路径：
 
-`START -> collect_requirements -> load_roles -> plan_global_story -> generate_role_views -> integrate_perspectives -> quality_check -> finalize_output -> END`
+`START -> collect_requirements -> load_story_framework -> load_roles -> plan_global_story -> generate_role_views -> integrate_perspectives -> quality_check -> finalize_output -> END`
 
 ## 2. 节点职责
 
@@ -25,35 +26,42 @@
 - 读取输入参数（topic/style/roles）。
 - 自动发现 role 目录中的角色（当输入未显式提供 roles 时）。
 - 初始化 SQLite 数据库。
+- 执行 Ollama 启动健康检查（服务可达 + 模型存在）。
 
-### 2.2 load_roles
+### 2.2 load_story_framework
+
+- 按 `story_id` 从 `stories/<story_id>/framework.md` 加载故事框架。
+- 未命中时自动回退到 `stories/default/framework.md`。
+
+### 2.3 load_roles
 
 - 读取每个角色的 profile.md 与记忆切片目录。
 - 从 `memory/<role_id>/*.md` 聚合角色记忆切片。
 - 将角色资产写入 SQLite 的 role_assets 表（upsert）。
 
-### 2.3 plan_global_story
+### 2.4 plan_global_story
 
 - 生成全局剧情框架（global_outline）。
-- 调用 Ollama 规划模型生成三幕式主线和共享事实。
+- 调用 Ollama 规划模型，在故事框架约束下生成三幕式主线和共享事实。
 
-### 2.4 generate_role_views
+### 2.5 generate_role_views
 
 - 在统一 global_outline 下，按角色分别生成视角稿。
 - 每个角色调用 Ollama 角色模型，结合 profile 与 memory 输出角色视角。
 - 输出 role_view_drafts（role_id -> text）。
 
-### 2.5 integrate_perspectives
+### 2.6 integrate_perspectives
 
 - 将多角色视角稿整合为 integrated_draft。
 - 调用 Ollama 整合模型，输出统一正文。
 
-### 2.6 quality_check
+### 2.7 quality_check
 
 - 调用 Ollama 质检模型进行一致性和角色区分度评估。
 - 输出 quality_report（PASS/FAIL + 关键问题 + 修改建议）。
+- 当结果为 FAIL 且 `retry_count <= max_retry` 时，自动回到 `generate_role_views` 重试。
 
-### 2.7 finalize_output
+### 2.8 finalize_output
 
 - 生成 final_story。
 - 将整次运行写入 SQLite 的 story_runs 表。
@@ -103,6 +111,16 @@ memory/
 - `.env.example`：配置模板，受 git 跟踪。
 - 默认 Ollama 地址：`http://127.0.0.1:11434`
 - 默认模型：`Qwen3.5:9b`
+
+### 3.5 故事框架目录
+
+```
+stories/
+  default/
+    framework.md
+  urban_detective/
+    framework.md
+```
 
 ## 4. 后续扩展建议
 

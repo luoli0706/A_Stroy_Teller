@@ -1,4 +1,5 @@
 import json
+import os
 
 from langgraph.graph import END, START, StateGraph
 
@@ -6,26 +7,42 @@ from app.llm_client import get_story_client
 from app.role_memory import discover_roles, load_role_assets
 from app.sqlite_store import DEFAULT_DB_PATH, init_db, insert_story_run, upsert_role_asset
 from app.state import StoryState
+from app.story_framework import DEFAULT_STORY_ID, load_story_framework
 
 
 ROLE_DIR = "role"
 MEMORY_DIR = "memory"
+STORIES_DIR = "stories"
 
 
 def collect_requirements(state: StoryState) -> StoryState:
+    max_retry = int(state.get("max_retry", os.getenv("MAX_RETRY", "1")))
+    story_id = state.get("story_id", DEFAULT_STORY_ID)
     topic = state.get("topic", "an unexpected friendship")
     style = state.get("style", "warm")
     roles = state.get("roles") or discover_roles(ROLE_DIR)
     sqlite_db_path = state.get("sqlite_db_path") or str(DEFAULT_DB_PATH)
     init_db(sqlite_db_path)
+    get_story_client().assert_ready()
 
     return {
         **state,
+        "story_id": story_id,
         "topic": topic,
         "style": style,
         "roles": roles,
+        "retry_count": state.get("retry_count", 0),
+        "max_retry": max_retry,
         "sqlite_db_path": sqlite_db_path,
     }
+
+
+def load_story_framework_node(state: StoryState) -> StoryState:
+    story_id, framework = load_story_framework(
+        story_id=state.get("story_id", DEFAULT_STORY_ID),
+        stories_dir=STORIES_DIR,
+    )
+    return {**state, "story_id": story_id, "story_framework": framework}
 
 
 def load_roles(state: StoryState) -> StoryState:
@@ -50,6 +67,7 @@ def plan_global_story(state: StoryState) -> StoryState:
         topic=state["topic"],
         style=state["style"],
         role_ids=state.get("roles", []),
+        framework=state.get("story_framework", ""),
     )
 
     return {**state, "global_outline": outline}
@@ -94,16 +112,30 @@ def quality_check(state: StoryState) -> StoryState:
         integrated_story=state.get("integrated_draft", ""),
         role_ids=state.get("roles", []),
     )
-    return {**state, "quality_report": report}
+    retry_count = state.get("retry_count", 0)
+    if "FAIL" in report.upper():
+        retry_count += 1
+    return {**state, "quality_report": report, "retry_count": retry_count}
+
+
+def route_after_quality(state: StoryState) -> str:
+    report = state.get("quality_report", "")
+    retry_count = state.get("retry_count", 0)
+    max_retry = state.get("max_retry", 1)
+    if "FAIL" in report.upper() and retry_count <= max_retry:
+        return "generate_role_views"
+    return "finalize_output"
 
 
 def finalize_output(state: StoryState) -> StoryState:
     final_story = state.get("integrated_draft", "")
     quality_report = state.get("quality_report", "")
+    retry_count = state.get("retry_count", 0)
     if quality_report and "FAIL" in quality_report.upper():
         final_story = (
             "[Quality Check: FAIL]\n"
-            "The integrated story may contain consistency issues.\n\n"
+            "The integrated story may contain consistency issues after retry attempts.\n"
+            f"retry_count={retry_count}\n\n"
             + final_story
         )
 
@@ -121,6 +153,7 @@ def finalize_output(state: StoryState) -> StoryState:
 def build_graph():
     graph = StateGraph(StoryState)
     graph.add_node("collect_requirements", collect_requirements)
+    graph.add_node("load_story_framework", load_story_framework_node)
     graph.add_node("load_roles", load_roles)
     graph.add_node("plan_global_story", plan_global_story)
     graph.add_node("generate_role_views", generate_role_views)
@@ -129,12 +162,20 @@ def build_graph():
     graph.add_node("finalize_output", finalize_output)
 
     graph.add_edge(START, "collect_requirements")
-    graph.add_edge("collect_requirements", "load_roles")
+    graph.add_edge("collect_requirements", "load_story_framework")
+    graph.add_edge("load_story_framework", "load_roles")
     graph.add_edge("load_roles", "plan_global_story")
     graph.add_edge("plan_global_story", "generate_role_views")
     graph.add_edge("generate_role_views", "integrate_perspectives")
     graph.add_edge("integrate_perspectives", "quality_check")
-    graph.add_edge("quality_check", "finalize_output")
+    graph.add_conditional_edges(
+        "quality_check",
+        route_after_quality,
+        {
+            "generate_role_views": "generate_role_views",
+            "finalize_output": "finalize_output",
+        },
+    )
     graph.add_edge("finalize_output", END)
 
     return graph.compile()
