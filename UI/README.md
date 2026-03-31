@@ -13,6 +13,10 @@ A lightweight user client for A Story Teller.
 - Story history panel (load run records from SQLite)
 - Role management panel (add/delete profile, add/delete memory slices)
 - Export button to write current result into `opt/` as markdown and json
+- Three-tab routing buttons for page switching:
+	- Story Management
+	- Role Management
+	- Settings
 
 ## Run
 

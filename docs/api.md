@@ -253,3 +253,4 @@ python tools/role_cli.py delete-all-memory bob
 - 历史运行记录面板（读取 SQLite `story_runs`）
 - 角色管理面板（角色设定与记忆切片增删）
 - 一键导出到 `opt/`（markdown + json）
+- 三标签路由切换（故事管理 / 角色管理 / 设置）
