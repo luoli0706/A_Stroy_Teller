@@ -179,7 +179,22 @@ python -m app.main --story-id urban_detective --topic "midnight archive theft" -
 
 - `build_input_state(...)`：构建标准化输入状态。
 - `run_story(state)`：非流式一次性执行，返回最终状态。
-- `stream_story_events(state)`：流式执行，按节点产出事件迭代器。
+- `stream_story_events(state)`：流式执行，产出节点事件 + token 事件迭代器。
+
+### 7.2 监控与日志
+
+- 控制台日志：运行时输出节点开始/结束、重试、run_id 等信息。
+- 文件日志：自动写入 `logs/run_<timestamp>.log`。
+- 关键字段：`node`、`stage`、`pid`、`retry_count`、`run_id`。
+
+### 7.3 流式事件类型
+
+- `token`：LLM token 增量事件。
+  - 字段：`event`, `node`, `model`, `role_id`, `text`
+- `node_update`：LangGraph 节点状态更新。
+  - 字段：`event`, `node`, `keys`, `data`
+- `done`：流程流式结束标记。
+- `error`：流式执行错误。
 
 ## 8. 脚本
 

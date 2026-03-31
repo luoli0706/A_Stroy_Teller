@@ -22,7 +22,13 @@
 流式能力：
 
 - 通过 `python -m app.main --stream` 启用。
-- 按节点输出更新事件（JSON 行），便于 UI 实时渲染流程进度。
+- 按节点输出更新事件（JSON 行），并附带 LLM token 事件，便于 UI 实时渲染流程进度。
+
+监控能力：
+
+- 关键节点输出结构化日志到控制台。
+- 同步写入 `logs/run_<timestamp>.log`。
+- 记录进程信息（pid）、节点阶段（start/end）、重试次数、run_id。
 
 ## 2. 节点职责
 

@@ -1,3 +1,4 @@
+from typing import Any
 from typing import TypedDict
 
 
@@ -7,6 +8,9 @@ class RoleAsset(TypedDict):
 
 
 class StoryState(TypedDict, total=False):
+    logger_name: str
+    log_file_path: str
+    event_callback: Any
     story_id: str
     story_framework: str
     topic: str

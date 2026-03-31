@@ -24,3 +24,4 @@ Thumbs.db
 # Local runtime data
 .data/
 *.db
+logs/

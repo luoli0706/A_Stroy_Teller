@@ -2,6 +2,7 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 import json
+from typing import Callable
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -80,12 +81,44 @@ class OllamaStoryClient:
         if not result.ok:
             raise RuntimeError(result.message)
 
-    def _chat(self, model: str, prompt: str, temperature: float | None = None) -> str:
+    def _chat(
+        self,
+        model: str,
+        prompt: str,
+        temperature: float | None = None,
+        token_callback: Callable[[dict], None] | None = None,
+        event_meta: dict | None = None,
+    ) -> str:
         llm = ChatOllama(
             model=model,
             base_url=self.base_url,
             temperature=self.temperature if temperature is None else temperature,
         )
+
+        if token_callback is not None:
+            parts: list[str] = []
+            meta = event_meta or {}
+            for chunk in llm.stream(prompt):
+                content = getattr(chunk, "content", "")
+                text = ""
+                if isinstance(content, list):
+                    text = "".join(str(part) for part in content)
+                else:
+                    text = str(content)
+
+                if text:
+                    parts.append(text)
+                    token_callback(
+                        {
+                            "event": "token",
+                            "node": meta.get("node", ""),
+                            "model": model,
+                            "role_id": meta.get("role_id", ""),
+                            "text": text,
+                        }
+                    )
+            return "".join(parts).strip()
+
         response = llm.invoke(prompt)
         content = getattr(response, "content", "")
         if isinstance(content, list):
@@ -98,6 +131,7 @@ class OllamaStoryClient:
         style: str,
         role_ids: list[str],
         framework: str,
+        token_callback: Callable[[dict], None] | None = None,
     ) -> str:
         prompt = (
             "You are a story planner. Build a concise 3-act outline with timeline beats. "
@@ -112,7 +146,13 @@ class OllamaStoryClient:
             "- Act 3\n"
             "- Shared facts (bullet list)"
         )
-        return self._chat(self.model_planner, prompt, temperature=0.5)
+        return self._chat(
+            self.model_planner,
+            prompt,
+            temperature=0.5,
+            token_callback=token_callback,
+            event_meta={"node": "plan_global_story"},
+        )
 
     def generate_role_view(
         self,
@@ -121,6 +161,7 @@ class OllamaStoryClient:
         memory: str,
         outline: str,
         style: str,
+        token_callback: Callable[[dict], None] | None = None,
     ) -> str:
         prompt = (
             "You are writing one role-specific narrative in first person. "
@@ -135,9 +176,21 @@ class OllamaStoryClient:
             "2) Scene Narrative (short story section)\n"
             "3) Role-specific interpretation"
         )
-        return self._chat(self.model_role, prompt, temperature=0.8)
+        return self._chat(
+            self.model_role,
+            prompt,
+            temperature=0.8,
+            token_callback=token_callback,
+            event_meta={"node": "generate_role_views", "role_id": role_id},
+        )
 
-    def integrate_perspectives(self, topic: str, style: str, role_drafts: dict[str, str]) -> str:
+    def integrate_perspectives(
+        self,
+        topic: str,
+        style: str,
+        role_drafts: dict[str, str],
+        token_callback: Callable[[dict], None] | None = None,
+    ) -> str:
         draft_blocks = "\n\n".join(
             f"Role: {role_id}\n{draft}" for role_id, draft in role_drafts.items()
         )
@@ -151,9 +204,21 @@ class OllamaStoryClient:
             "- Title\n"
             "- Final integrated story"
         )
-        return self._chat(self.model_integrator, prompt, temperature=0.6)
+        return self._chat(
+            self.model_integrator,
+            prompt,
+            temperature=0.6,
+            token_callback=token_callback,
+            event_meta={"node": "integrate_perspectives"},
+        )
 
-    def quality_check(self, outline: str, integrated_story: str, role_ids: list[str]) -> str:
+    def quality_check(
+        self,
+        outline: str,
+        integrated_story: str,
+        role_ids: list[str],
+        token_callback: Callable[[dict], None] | None = None,
+    ) -> str:
         prompt = (
             "You are a strict story QA reviewer.\n"
             "Evaluate consistency, role voice separation, and timeline coherence.\n"
@@ -162,7 +227,13 @@ class OllamaStoryClient:
             f"Outline:\n{outline}\n\n"
             f"Integrated story:\n{integrated_story}"
         )
-        return self._chat(self.model_quality, prompt, temperature=0.2)
+        return self._chat(
+            self.model_quality,
+            prompt,
+            temperature=0.2,
+            token_callback=token_callback,
+            event_meta={"node": "quality_check"},
+        )
 
 
 @lru_cache(maxsize=1)

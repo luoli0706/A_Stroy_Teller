@@ -62,6 +62,7 @@ def main() -> None:
 
     print(f"\nSaved run_id: {result.get('run_id', 'n/a')}")
     print(f"SQLite DB: {result.get('sqlite_db_path', '.data/story_teller.db')}")
+    print(f"Log File: {result.get('log_file_path', 'logs/run_<timestamp>.log')}")
 
 
 if __name__ == "__main__":
