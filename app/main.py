@@ -1,7 +1,8 @@
 import argparse
+import json
 
-from app.graph import build_graph
 from app.llm_client import get_story_client
+from app.runtime import build_input_state, run_story, stream_story_events
 
 
 def parse_args() -> argparse.Namespace:
@@ -15,6 +16,11 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated role IDs",
     )
     parser.add_argument("--max-retry", type=int, default=1)
+    parser.add_argument(
+        "--stream",
+        action="store_true",
+        help="Output node updates as a stream (NDJSON style)",
+    )
     return parser.parse_args()
 
 
@@ -26,17 +32,22 @@ def main() -> None:
     if not health.ok:
         raise SystemExit(f"Startup health check failed: {health.message}")
 
-    graph = build_graph()
-
-    result = graph.invoke(
-        {
-            "story_id": args.story_id,
-            "topic": args.topic,
-            "style": args.style,
-            "roles": roles,
-            "max_retry": args.max_retry,
-        }
+    state = build_input_state(
+        story_id=args.story_id,
+        topic=args.topic,
+        style=args.style,
+        roles=roles,
+        max_retry=args.max_retry,
     )
+
+    if args.stream:
+        final_result: dict = {}
+        for event in stream_story_events(state):
+            print(json.dumps(event, ensure_ascii=False))
+            final_result.update(event.get("data", {}))
+        result = final_result
+    else:
+        result = run_story(state)
 
     print("=== Role Views ===")
     for role_id, draft in result.get("role_view_drafts", {}).items():

@@ -118,20 +118,27 @@
 默认值：
 
 - `OLLAMA_BASE_URL=http://127.0.0.1:11434`
-- `OLLAMA_MODEL_PLANNER=Qwen3.5:9b`
-- `OLLAMA_MODEL_ROLE=Qwen3.5:9b`
-- `OLLAMA_MODEL_INTEGRATOR=Qwen3.5:9b`
-- `OLLAMA_MODEL_QUALITY=Qwen3.5:9b`
+- `OLLAMA_MODEL_PLANNER=qwen3.5:9b`
+- `OLLAMA_MODEL_ROLE=qwen3.5:9b`
+- `OLLAMA_MODEL_INTEGRATOR=qwen3.5:9b`
+- `OLLAMA_MODEL_QUALITY=qwen3.5:9b`
 - `OLLAMA_TEMPERATURE=0.7`
 
 ## 7. 运行接口
 
 文件：`app/main.py`
+核心运行模块：`app/runtime.py`
 
 执行命令：
 
 ```bash
 python -m app.main
+```
+
+流式执行命令：
+
+```bash
+python -m app.main --stream
 ```
 
 参数化运行示例：
@@ -140,11 +147,22 @@ python -m app.main
 python -m app.main --story-id urban_detective --topic "midnight archive theft" --style noir --roles "Reshaely,VanlyShan,SolinXuan" --max-retry 2
 ```
 
+参数化流式示例：
+
+```bash
+python -m app.main --story-id urban_detective --topic "midnight archive theft" --style noir --roles "Reshaely,VanlyShan,SolinXuan" --max-retry 2 --stream
+```
+
 输出内容：
 
 - 每个角色的视角稿
 - 整合后的故事
 - SQLite 落库后的 run_id 和 db 路径
+
+流式输出内容：
+
+- 每个节点的更新事件（JSON 行）
+- 字段包括：`event`、`node`、`keys`、`data`
 
 输入参数可选增加：
 
@@ -153,6 +171,15 @@ python -m app.main --story-id urban_detective --topic "midnight archive theft" -
 - `style`：叙事风格。
 - `roles`：逗号分隔角色 ID 列表。
 - `max_retry`：质检失败后的最大重试次数。
+- `stream`：启用节点级流式输出（适合 UI 实时展示）。
+
+### 7.1 Runtime API
+
+文件：`app/runtime.py`
+
+- `build_input_state(...)`：构建标准化输入状态。
+- `run_story(state)`：非流式一次性执行，返回最终状态。
+- `stream_story_events(state)`：流式执行，按节点产出事件迭代器。
 
 ## 8. 脚本
 

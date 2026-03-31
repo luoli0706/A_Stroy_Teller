@@ -19,6 +19,11 @@
 
 `START -> collect_requirements -> load_story_framework -> load_roles -> plan_global_story -> generate_role_views -> integrate_perspectives -> quality_check -> finalize_output -> END`
 
+流式能力：
+
+- 通过 `python -m app.main --stream` 启用。
+- 按节点输出更新事件（JSON 行），便于 UI 实时渲染流程进度。
+
 ## 2. 节点职责
 
 ### 2.1 collect_requirements
@@ -110,7 +115,7 @@ memory/
 - `.env`：本地配置文件，不被 git 跟踪。
 - `.env.example`：配置模板，受 git 跟踪。
 - 默认 Ollama 地址：`http://127.0.0.1:11434`
-- 默认模型：`Qwen3.5:9b`
+- 默认模型：`qwen3.5:9b`
 
 ### 3.5 故事框架目录
 

@@ -10,7 +10,7 @@ from langchain_ollama import ChatOllama
 
 
 DEFAULT_BASE_URL = "http://127.0.0.1:11434"
-DEFAULT_MODEL = "Qwen3.5:9b"
+DEFAULT_MODEL = "qwen3.5:9b"
 
 
 @dataclass(frozen=True)
