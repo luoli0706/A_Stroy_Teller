@@ -186,6 +186,7 @@ python -m app.main --story-id urban_detective --topic "midnight archive theft" -
 - 控制台日志：运行时输出节点开始/结束、重试、run_id 等信息。
 - 文件日志：自动写入 `logs/run_<timestamp>.log`。
 - 关键字段：`node`、`stage`、`pid`、`retry_count`、`run_id`。
+- 实现模块：`app/observability.py`（创建运行级 logger，同时挂载 console/file handler）。
 
 ### 7.3 流式事件类型
 
