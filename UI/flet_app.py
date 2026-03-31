@@ -59,8 +59,16 @@ I18N = {
         "role_management": "角色管理",
         "role_id": "角色 ID",
         "role_profile": "角色设定",
+        "role_name": "角色名字（英文）",
         "memory_story_id": "记忆故事 ID",
         "memory_slice_text": "记忆切片内容",
+        "role_query_profile": "查询角色设定",
+        "role_load_by_name": "按名字加载",
+        "role_load": "一键加载",
+        "memory_slices": "记忆切片子标签",
+        "no_memory_slices": "当前角色暂无记忆切片。",
+        "active_memory_slice": "当前切片: {story_id}",
+        "active_memory_slice_none": "当前切片: 无",
         "add_update_profile": "新增/更新设定",
         "delete_profile": "删除设定",
         "add_update_memory": "新增/更新记忆",
@@ -83,6 +91,9 @@ I18N = {
         "health_failed": "健康检查：失败 | {message}",
         "no_story_runs": "暂无故事运行记录。",
         "no_roles": "暂无角色。",
+        "role_not_found": "未找到角色: {name}",
+        "role_loaded": "已加载角色: {role_id}",
+        "memory_slice_loaded": "已加载记忆切片: {role_id}/{story_id}",
         "run_not_found": "未找到运行记录 #{run_id}",
         "loaded_run": "已加载运行 #{run_id}",
         "quality_not_persisted": "来自历史加载：当前数据库结构未持久化 quality_report。",
@@ -136,8 +147,16 @@ I18N = {
         "role_management": "Role Management",
         "role_id": "Role ID",
         "role_profile": "Role Profile",
+        "role_name": "Role Name (EN)",
         "memory_story_id": "Memory Story ID",
         "memory_slice_text": "Memory Slice Text",
+        "role_query_profile": "Query Profile",
+        "role_load_by_name": "Load By Name",
+        "role_load": "Load",
+        "memory_slices": "Memory Slice Tabs",
+        "no_memory_slices": "No memory slices for current role.",
+        "active_memory_slice": "Active Slice: {story_id}",
+        "active_memory_slice_none": "Active Slice: none",
         "add_update_profile": "Add/Update Profile",
         "delete_profile": "Delete Profile",
         "add_update_memory": "Add/Update Memory",
@@ -160,6 +179,9 @@ I18N = {
         "health_failed": "Health: FAILED | {message}",
         "no_story_runs": "No story runs found.",
         "no_roles": "No roles found.",
+        "role_not_found": "Role not found: {name}",
+        "role_loaded": "Loaded role: {role_id}",
+        "memory_slice_loaded": "Loaded memory slice: {role_id}/{story_id}",
         "run_not_found": "Run #{run_id} not found.",
         "loaded_run": "Loaded run #{run_id}",
         "quality_not_persisted": "Loaded from history; quality_report is not persisted in current schema.",
@@ -254,9 +276,13 @@ def main(page: ft.Page) -> None:
     export_button = ft.OutlinedButton(tr("export_opt"))
 
     role_id_input = ft.TextField(label=tr("role_id"), width=220)
+    role_name_input = ft.TextField(label=tr("role_name"), width=240)
     profile_input = ft.TextField(label=tr("role_profile"), multiline=True, min_lines=5, max_lines=10)
     memory_story_id_input = ft.TextField(label=tr("memory_story_id"), width=220)
     memory_text_input = ft.TextField(label=tr("memory_slice_text"), multiline=True, min_lines=4, max_lines=8)
+    active_memory_slice_text = ft.Text(tr("active_memory_slice_none"), color="#555", selectable=True)
+    memory_slice_tabs = ft.Row(wrap=True, spacing=8)
+    selected_memory_slice = {"value": ""}
 
     history_limit = ft.TextField(label=tr("history_limit"), value="20", width=120)
     selected_run_text = ft.Text(tr("selected_run_none"), selectable=True)
@@ -338,9 +364,128 @@ def main(page: ft.Page) -> None:
             page.update()
             return
 
+        def quick_load(role_id: str) -> None:
+            load_role_to_editor(role_id)
+
         for role_id in role_ids:
-            role_list.controls.append(ft.Text(role_id, selectable=True))
+            role_list.controls.append(
+                ft.Row(
+                    [
+                        ft.Text(role_id, selectable=True),
+                        ft.TextButton(content=tr("role_load"), on_click=lambda _, rid=role_id: quick_load(rid)),
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                )
+            )
         page.update()
+
+    def _read_role_profile(role_id: str) -> str:
+        profile_path = Path("role") / role_id / "profile.md"
+        if not profile_path.exists():
+            return ""
+        return profile_path.read_text(encoding="utf-8").strip()
+
+    def _list_role_memory_story_ids(role_id: str) -> list[str]:
+        memory_path = Path("memory") / role_id
+        if not memory_path.exists():
+            return []
+        return sorted(item.stem for item in memory_path.glob("*.md"))
+
+    def _read_memory_slice(role_id: str, story_id: str) -> str:
+        memory_file = Path("memory") / role_id / f"{story_id}.md"
+        if not memory_file.exists():
+            return ""
+        return memory_file.read_text(encoding="utf-8").strip()
+
+    def _find_role_id_by_name(role_name: str) -> str | None:
+        normalized = role_name.strip().lower()
+        if not normalized:
+            return None
+        role_ids = discover_roles("role")
+        exact = [rid for rid in role_ids if rid.lower() == normalized]
+        if exact:
+            return exact[0]
+        partial = [rid for rid in role_ids if normalized in rid.lower()]
+        if partial:
+            return partial[0]
+        return None
+
+    def render_memory_slice_tabs(role_id: str) -> None:
+        memory_slice_tabs.controls.clear()
+        slice_ids = _list_role_memory_story_ids(role_id)
+
+        if not slice_ids:
+            selected_memory_slice["value"] = ""
+            active_memory_slice_text.value = tr("active_memory_slice_none")
+            memory_slice_tabs.controls.append(ft.Text(tr("no_memory_slices"), color="#666"))
+            page.update()
+            return
+
+        if selected_memory_slice["value"] not in slice_ids:
+            selected_memory_slice["value"] = slice_ids[0]
+
+        active_memory_slice_text.value = tr("active_memory_slice", story_id=selected_memory_slice["value"])
+
+        for sid in slice_ids:
+            is_active = sid == selected_memory_slice["value"]
+
+            def on_select_slice(_: ft.ControlEvent, story_id: str = sid) -> None:
+                selected_memory_slice["value"] = story_id
+                memory_story_id_input.value = story_id
+                memory_text_input.value = _read_memory_slice(role_id, story_id)
+                active_memory_slice_text.value = tr("active_memory_slice", story_id=story_id)
+                set_ui_status(tr("memory_slice_loaded", role_id=role_id, story_id=story_id), "#0f7a2a")
+                render_memory_slice_tabs(role_id)
+
+            memory_slice_tabs.controls.append(
+                ft.OutlinedButton(
+                    sid,
+                    disabled=is_active,
+                    on_click=on_select_slice,
+                )
+            )
+
+        page.update()
+
+    def load_role_to_editor(role_id: str) -> None:
+        role_id_input.value = role_id
+        role_name_input.value = role_id
+        profile_input.value = _read_role_profile(role_id)
+
+        slice_ids = _list_role_memory_story_ids(role_id)
+        if slice_ids:
+            selected_memory_slice["value"] = slice_ids[0]
+            memory_story_id_input.value = slice_ids[0]
+            memory_text_input.value = _read_memory_slice(role_id, slice_ids[0])
+            active_memory_slice_text.value = tr("active_memory_slice", story_id=slice_ids[0])
+        else:
+            selected_memory_slice["value"] = ""
+            memory_story_id_input.value = ""
+            memory_text_input.value = ""
+            active_memory_slice_text.value = tr("active_memory_slice_none")
+
+        render_memory_slice_tabs(role_id)
+        set_ui_status(tr("role_loaded", role_id=role_id), "#0f7a2a")
+        page.update()
+
+    def handle_query_role_profile(_: ft.ControlEvent) -> None:
+        role_name = role_name_input.value.strip()
+        role_id = _find_role_id_by_name(role_name)
+        if not role_id:
+            set_ui_status(tr("role_not_found", name=role_name), "#a21515")
+            return
+        role_id_input.value = role_id
+        profile_input.value = _read_role_profile(role_id)
+        set_ui_status(tr("role_loaded", role_id=role_id), "#0f7a2a")
+        page.update()
+
+    def handle_load_role_by_name(_: ft.ControlEvent) -> None:
+        role_name = role_name_input.value.strip()
+        role_id = _find_role_id_by_name(role_name)
+        if not role_id:
+            set_ui_status(tr("role_not_found", name=role_name), "#a21515")
+            return
+        load_role_to_editor(role_id)
 
     def refresh_settings_snapshot() -> None:
         client = get_story_client()
@@ -403,6 +548,7 @@ def main(page: ft.Page) -> None:
             return
         profile_path = add_role_profile(role_id, profile_input.value)
         set_ui_status(tr("profile_saved", path=profile_path), "#0f7a2a")
+        role_name_input.value = role_id
         render_roles()
 
     def handle_delete_profile(_: ft.ControlEvent) -> None:
@@ -415,7 +561,10 @@ def main(page: ft.Page) -> None:
             tr("profile_deleted", deleted=deleted, role_id=role_id),
             "#0f7a2a" if deleted else "#a21515",
         )
+        if deleted:
+            profile_input.value = ""
         render_roles()
+        page.update()
 
     def handle_add_memory(_: ft.ControlEvent) -> None:
         role_id = role_id_input.value.strip()
@@ -425,6 +574,8 @@ def main(page: ft.Page) -> None:
             return
         path = add_role_memory_slice(role_id, story, memory_text_input.value)
         set_ui_status(tr("memory_saved", path=path), "#0f7a2a")
+        selected_memory_slice["value"] = story
+        render_memory_slice_tabs(role_id)
 
     def handle_delete_memory(_: ft.ControlEvent) -> None:
         role_id = role_id_input.value.strip()
@@ -437,6 +588,11 @@ def main(page: ft.Page) -> None:
             tr("memory_deleted", deleted=deleted, role_id=role_id, story_id=story),
             "#0f7a2a" if deleted else "#a21515",
         )
+        if deleted and selected_memory_slice["value"] == story:
+            selected_memory_slice["value"] = ""
+            memory_story_id_input.value = ""
+            memory_text_input.value = ""
+        render_memory_slice_tabs(role_id)
 
     def handle_delete_all_memories(_: ft.ControlEvent) -> None:
         role_id = role_id_input.value.strip()
@@ -445,6 +601,10 @@ def main(page: ft.Page) -> None:
             return
         count = delete_all_role_memories(role_id)
         set_ui_status(tr("memory_all_deleted", count=count, role_id=role_id), "#0f7a2a")
+        selected_memory_slice["value"] = ""
+        memory_story_id_input.value = ""
+        memory_text_input.value = ""
+        render_memory_slice_tabs(role_id)
 
     def apply_locale() -> None:
         page.title = tr("app_title")
@@ -484,11 +644,19 @@ def main(page: ft.Page) -> None:
         add_memory_button.content = tr("add_update_memory")
         delete_memory_button.content = tr("delete_memory")
         delete_all_memory_button.content = tr("delete_all_memories")
+        query_profile_button.content = tr("role_query_profile")
+        load_role_by_name_button.content = tr("role_load_by_name")
 
         role_id_input.label = tr("role_id")
+        role_name_input.label = tr("role_name")
         profile_input.label = tr("role_profile")
         memory_story_id_input.label = tr("memory_story_id")
         memory_text_input.label = tr("memory_slice_text")
+        memory_slice_header.value = tr("memory_slices")
+        if selected_memory_slice["value"]:
+            active_memory_slice_text.value = tr("active_memory_slice", story_id=selected_memory_slice["value"])
+        else:
+            active_memory_slice_text.value = tr("active_memory_slice_none")
         history_limit.label = tr("history_limit")
 
         language_dropdown.label = tr("language")
@@ -509,6 +677,9 @@ def main(page: ft.Page) -> None:
 
         render_history()
         render_roles()
+        current_role_id = role_id_input.value.strip()
+        if current_role_id:
+            render_memory_slice_tabs(current_role_id)
         page.update()
 
     def on_language_change(_: ft.ControlEvent) -> None:
@@ -610,9 +781,13 @@ def main(page: ft.Page) -> None:
     add_memory_button = ft.OutlinedButton("Add/Update Memory", on_click=handle_add_memory)
     delete_memory_button = ft.OutlinedButton("Delete Memory", on_click=handle_delete_memory)
     delete_all_memory_button = ft.OutlinedButton("Delete All Memories", on_click=handle_delete_all_memories)
+    query_profile_button = ft.OutlinedButton("Query Profile", on_click=handle_query_role_profile)
+    load_role_by_name_button = ft.OutlinedButton("Load By Name", on_click=handle_load_role_by_name)
     refresh_history_button = ft.OutlinedButton("Refresh History", on_click=lambda _: render_history())
     refresh_roles_button = ft.OutlinedButton("Refresh Roles", on_click=lambda _: render_roles())
     refresh_settings_button = ft.OutlinedButton("Refresh Settings", on_click=lambda _: refresh_settings_snapshot())
+
+    memory_slice_header = ft.Text(tr("memory_slices"), size=16, weight=ft.FontWeight.W_600)
 
     language_dropdown = ft.Dropdown(
         label=tr("language"),
@@ -622,7 +797,7 @@ def main(page: ft.Page) -> None:
             ft.dropdown.Option(key="zh", text="中文"),
             ft.dropdown.Option(key="en", text="English"),
         ],
-        on_change=on_language_change,
+        on_select=on_language_change,
     )
 
     form_row_1 = ft.Row([story_id, style, max_retry], wrap=True)
@@ -713,8 +888,12 @@ def main(page: ft.Page) -> None:
         content=ft.Column(
             [
                 role_header,
+                ft.Row([role_name_input, query_profile_button, load_role_by_name_button], wrap=True),
                 ft.Row([role_id_input, memory_story_id_input, refresh_roles_button], wrap=True),
                 profile_input,
+                memory_slice_header,
+                active_memory_slice_text,
+                memory_slice_tabs,
                 memory_text_input,
                 ft.Row([add_profile_button, delete_profile_button], wrap=True),
                 ft.Row([add_memory_button, delete_memory_button, delete_all_memory_button], wrap=True),

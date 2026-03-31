@@ -251,6 +251,13 @@ python tools/role_cli.py delete-all-memory bob
 
 - 流式生成（node_update + token + node_log）
 - 历史运行记录面板（读取 SQLite `story_runs`）
-- 角色管理面板（角色设定与记忆切片增删）
+- 角色管理面板：
+  - 支持按角色名字（英文）查询角色设定
+  - 支持按名字加载角色
+  - 角色列表支持一键加载到编辑区
+  - 记忆切片以子标签按钮展示并支持点击加载
+  - 支持角色设定增删、单条记忆切片增删、全部记忆删除
 - 一键导出到 `opt/`（markdown + json）
 - 三标签路由切换（故事管理 / 角色管理 / 设置）
+- 设置页支持中英切换（Chinese / English）
+- 三页面均支持滚动（适配长内容和小屏）
