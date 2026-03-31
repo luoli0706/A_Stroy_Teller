@@ -10,6 +10,9 @@ A lightweight user client for A Story Teller.
 - Token stream panel for LLM token events
 - Final story and quality report display
 - Runtime metadata display (`run_id`, DB path, log path)
+- Story history panel (load run records from SQLite)
+- Role management panel (add/delete profile, add/delete memory slices)
+- Export button to write current result into `opt/` as markdown and json
 
 ## Run
 

@@ -242,3 +242,14 @@ python tools/role_cli.py delete-all-memory bob
   - 输出：更新后的角色记忆
 
 当前版本尚未实现 HTTP API，本文件记录的是已实现模块 API 与下一步服务化方向。
+
+## 11. Flet UI 客户端
+
+文件：`ui/flet_app.py`
+
+当前 UI 能力：
+
+- 流式生成（node_update + token + node_log）
+- 历史运行记录面板（读取 SQLite `story_runs`）
+- 角色管理面板（角色设定与记忆切片增删）
+- 一键导出到 `opt/`（markdown + json）
