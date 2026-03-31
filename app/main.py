@@ -19,6 +19,10 @@ def main() -> None:
 
     print("\n=== Integrated Story ===")
     print(result.get("final_story", ""))
+
+    print("\n=== Quality Report ===")
+    print(result.get("quality_report", ""))
+
     print(f"\nSaved run_id: {result.get('run_id', 'n/a')}")
     print(f"SQLite DB: {result.get('sqlite_db_path', '.data/story_teller.db')}")
 

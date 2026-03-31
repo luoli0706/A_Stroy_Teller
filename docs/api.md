@@ -13,23 +13,77 @@
 - 说明：构建并返回编译后的 LangGraph。
 - 返回：可执行图实例。
 
-## 3. Role API
+### 2.2 节点调用关系
+
+- `collect_requirements`：读取输入并初始化 SQLite。
+- `load_roles`：加载角色 profile/memory 并同步入库。
+- `plan_global_story`：调用 LLM 生成主线。
+- `generate_role_views`：调用 LLM 生成多角色视角文本。
+- `integrate_perspectives`：调用 LLM 生成整合文本。
+- `quality_check`：调用 LLM 输出 PASS/FAIL 质检报告。
+- `finalize_output`：落库运行记录并返回 run_id。
+
+## 3. LLM API
+
+文件：`app/llm_client.py`
+
+### 3.1 get_story_client()
+
+- 返回：缓存的 `OllamaStoryClient` 单例。
+
+### 3.2 OllamaStoryClient.plan_global_story(topic, style, role_ids)
+
+- 作用：使用规划模型输出全局故事大纲。
+
+### 3.3 OllamaStoryClient.generate_role_view(role_id, profile, memory, outline, style)
+
+- 作用：按角色 profile + memory 生成单角色视角叙述。
+
+### 3.4 OllamaStoryClient.integrate_perspectives(topic, style, role_drafts)
+
+- 作用：整合多角色视角为统一故事文本。
+
+### 3.5 OllamaStoryClient.quality_check(outline, integrated_story, role_ids)
+
+- 作用：输出质量检查报告（PASS/FAIL + 建议）。
+
+## 4. Role API
 
 文件：`app/role_memory.py`
 
-### 3.1 discover_roles(base_dir)
+### 4.1 discover_roles(base_dir)
 
 - 输入：`base_dir`（角色根目录）
-- 返回：角色 ID 列表（目录名）
+- 返回：角色 ID 列表（仅包含存在 `profile.md` 的角色目录）
 
-### 3.2 load_role_assets(base_dir, roles)
+### 4.2 load_role_assets(base_dir, roles, memory_dir="memory")
 
-- 输入：角色根目录与角色列表
+- 输入：角色根目录、角色列表、独立记忆目录
 - 返回：角色资产映射
   - profile: 角色设定文本
-  - memory: 角色记忆文本
+  - memory: 角色记忆切片聚合文本
 
-## 4. SQLite API
+### 4.3 add_role_profile(role_id, profile_text, role_dir="role")
+
+- 作用：新增或覆盖角色设定文件 `role/<role_id>/profile.md`。
+
+### 4.4 delete_role_profile(role_id, role_dir="role")
+
+- 作用：删除角色设定文件。
+
+### 4.5 add_role_memory_slice(role_id, story_id, memory_text, memory_dir="memory")
+
+- 作用：新增或覆盖单个故事记忆切片 `memory/<role_id>/<story_id>.md`。
+
+### 4.6 delete_role_memory_slice(role_id, story_id, memory_dir="memory")
+
+- 作用：删除指定故事记忆切片。
+
+### 4.7 delete_all_role_memories(role_id, memory_dir="memory", role_dir="role")
+
+- 作用：删除角色全部记忆切片，并兼容清理旧路径 `role/<role_id>/memory.md`。
+
+## 5. SQLite API
 
 文件：`app/sqlite_store.py`
 
@@ -47,7 +101,20 @@
 - 作用：写入一条故事运行记录到 story_runs。
 - 返回：新记录的 run_id。
 
-## 5. 运行接口
+## 6. 环境变量 API 合约
+
+`.env` 为本地运行配置（已在 `.gitignore` 中忽略），`.env.example` 为提交模板。
+
+默认值：
+
+- `OLLAMA_BASE_URL=http://127.0.0.1:11434`
+- `OLLAMA_MODEL_PLANNER=Qwen3.5:9b`
+- `OLLAMA_MODEL_ROLE=Qwen3.5:9b`
+- `OLLAMA_MODEL_INTEGRATOR=Qwen3.5:9b`
+- `OLLAMA_MODEL_QUALITY=Qwen3.5:9b`
+- `OLLAMA_TEMPERATURE=0.7`
+
+## 7. 运行接口
 
 文件：`app/main.py`
 
@@ -63,7 +130,33 @@ python -m app.main
 - 整合后的故事
 - SQLite 落库后的 run_id 和 db 路径
 
-## 6. 规划中的 HTTP API（建议）
+## 8. 脚本
+
+脚本统一放置在 `scripts/` 文件夹。
+
+- `scripts/test_role_ops.py`
+  - 测试删除 `alice` 和 `bob` 的角色设定与记忆。
+  - 新增角色 `Reshaely`、`VanlyShan`、`SolinXuan` 的设定。
+  - 新增多故事记忆切片，写入 `memory/<role_id>/`。
+
+## 9. CLI 封装（独立文件夹）
+
+角色接口已封装为命令行工具，单独放在 `tools/` 文件夹：
+
+- `tools/role_cli.py`
+
+常用命令：
+
+```bash
+python tools/role_cli.py list-roles
+python tools/role_cli.py add-profile Reshaely --file role/Reshaely/profile.md
+python tools/role_cli.py delete-profile alice
+python tools/role_cli.py add-memory SolinXuan case_001 --text "- clue A\n- clue B"
+python tools/role_cli.py delete-memory SolinXuan case_001
+python tools/role_cli.py delete-all-memory bob
+```
+
+## 10. 规划中的 HTTP API（建议）
 
 后续可在 `app/api/` 下增加 FastAPI，并暴露以下接口：
 

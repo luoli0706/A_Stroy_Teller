@@ -125,19 +125,39 @@ A Story Teller 是一个以 LangGraph 为核心编排框架的故事生成系统
 
 ```
 role/
-  alice/
+  Reshaely/
     profile.md
-    memory.md
-  bob/
+  VanlyShan/
     profile.md
-    memory.md
+  SolinXuan/
+    profile.md
+
+memory/
+  Reshaely/
+    case_library_midnight.md
+    case_clocktower_signal.md
+  VanlyShan/
+    case_library_midnight.md
+    case_clocktower_signal.md
+  SolinXuan/
+    case_library_midnight.md
+    case_clocktower_signal.md
+
+tools/
+  role_cli.py
+
+scripts/
+  test_role_ops.py
+
+opt/
+  # 输出结果目录
 ```
 
 说明：
 
 - `profile.md` 偏稳定，人工或工具编辑。
-- `memory.md` 可由流程节点自动增量更新。
-- 所有角色共享同一个 `global_outline`，但叙述时引用自己的 `memory.md`。
+- `memory/<role_id>/*.md` 为记忆切片，按故事维度管理。
+- 所有角色共享同一个 `global_outline`，但叙述时引用自己的记忆切片集合。
 
 ## 5. 技术方案建议
 
@@ -147,27 +167,22 @@ role/
 app/
   main.py                 # 入口
   graph.py                # 图编排
+  llm_client.py           # Ollama 调用封装
   state.py                # TypedDict/Pydantic 状态定义
-  nodes/
-    collect.py
-    role_loader.py
-    planner.py
-    role_narrator.py
-    integrator.py
-    quality.py
-    finalize.py
-  prompts/
-    planner.md
-    role_narrator.md
-    integrator.md
-  services/
-    llm_client.py          # 模型调用封装（Ollama）
-    role_memory.py         # 角色记忆读写
-    guardrails.py          # 内容安全与约束
+  role_memory.py          # 角色设定/记忆接口
+  sqlite_store.py         # SQLite 持久化
 role/
   <role_id>/
     profile.md
-    memory.md
+memory/
+  <role_id>/
+    <story_id>.md
+tools/
+  role_cli.py             # 角色接口 CLI 封装
+scripts/
+  test_role_ops.py        # 接口测试脚本
+opt/
+  # 输出结果目录
 tests/
   test_graph_smoke.py
   test_nodes.py
@@ -187,6 +202,7 @@ tests/
 
 - `MODEL_PROVIDER`：固定为 `ollama`
 - `OLLAMA_BASE_URL`：默认 `http://127.0.0.1:11434`
+- `OLLAMA_MODEL_*`：默认 `Qwen3.5:9b`
 - `OLLAMA_MODEL_PLANNER`：主线规划模型名
 - `OLLAMA_MODEL_ROLE`：角色叙述模型名
 - `OLLAMA_MODEL_INTEGRATOR`：整合模型名
@@ -245,9 +261,9 @@ tests/
 
 建议先完成以下四步：
 
-1. 新增 `role/<role_id>/profile.md` 与 `memory.md`，至少准备 2 个角色。
-2. 把 `app/graph.py` 升级为“规划 -> 多角色叙述 -> 整合 -> 质检”。
-3. 在 `services/llm_client.py` 完成 Ollama 调用封装，并增加连通性检查。
+1. 通过 `tools/role_cli.py` 管理角色设定和记忆切片。
+2. 在 `app/graph.py` 上增加质量检查失败后的重试回路。
+3. 在 `opt/` 下增加运行导出（按 run_id 输出 markdown/json）。
 4. 新增最小测试，覆盖单角色与双角色场景的冒烟运行。
 
 ---

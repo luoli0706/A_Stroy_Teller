@@ -2,12 +2,14 @@ import json
 
 from langgraph.graph import END, START, StateGraph
 
+from app.llm_client import get_story_client
 from app.role_memory import discover_roles, load_role_assets
 from app.sqlite_store import DEFAULT_DB_PATH, init_db, insert_story_run, upsert_role_asset
 from app.state import StoryState
 
 
 ROLE_DIR = "role"
+MEMORY_DIR = "memory"
 
 
 def collect_requirements(state: StoryState) -> StoryState:
@@ -28,7 +30,7 @@ def collect_requirements(state: StoryState) -> StoryState:
 
 def load_roles(state: StoryState) -> StoryState:
     roles = state.get("roles", [])
-    assets = load_role_assets(ROLE_DIR, roles)
+    assets = load_role_assets(ROLE_DIR, roles, memory_dir=MEMORY_DIR)
     db_path = state.get("sqlite_db_path", str(DEFAULT_DB_PATH))
 
     for role_id, role_asset in assets.items():
@@ -43,17 +45,18 @@ def load_roles(state: StoryState) -> StoryState:
 
 
 def plan_global_story(state: StoryState) -> StoryState:
-    topic = state["topic"]
-    outline = (
-        f"Act 1: Introduce tension around {topic}. "
-        f"Act 2: Reveal hidden motives and conflicting interpretations. "
-        f"Act 3: Resolve conflict and close emotional arcs."
+    client = get_story_client()
+    outline = client.plan_global_story(
+        topic=state["topic"],
+        style=state["style"],
+        role_ids=state.get("roles", []),
     )
 
     return {**state, "global_outline": outline}
 
 
 def generate_role_views(state: StoryState) -> StoryState:
+    client = get_story_client()
     outline = state["global_outline"]
     style = state["style"]
     role_assets = state.get("role_assets", {})
@@ -61,29 +64,49 @@ def generate_role_views(state: StoryState) -> StoryState:
 
     for role_id in state.get("roles", []):
         asset = role_assets.get(role_id, {"profile": "", "memory": ""})
-        drafts[role_id] = (
-            f"[{role_id.upper()} VIEW]\n"
-            f"Style target: {style}.\n"
-            f"Outline anchor: {outline}\n\n"
-            f"Role profile:\n{asset['profile']}\n\n"
-            f"Role memory:\n{asset['memory']}\n\n"
-            f"Narration:\n"
-            f"From {role_id}'s perspective, the same event looks different because of personal goals and memory bias."
+        drafts[role_id] = client.generate_role_view(
+            role_id=role_id,
+            profile=asset["profile"],
+            memory=asset["memory"],
+            outline=outline,
+            style=style,
         )
 
     return {**state, "role_view_drafts": drafts}
 
 
 def integrate_perspectives(state: StoryState) -> StoryState:
+    client = get_story_client()
     role_drafts = state.get("role_view_drafts", {})
-    merged_sections = [f"## {role_id}\n{text}" for role_id, text in role_drafts.items()]
-    integrated = "# Integrated Story\n\n" + "\n\n".join(merged_sections)
+    integrated = client.integrate_perspectives(
+        topic=state.get("topic", ""),
+        style=state.get("style", ""),
+        role_drafts=role_drafts,
+    )
 
     return {**state, "integrated_draft": integrated}
 
 
+def quality_check(state: StoryState) -> StoryState:
+    client = get_story_client()
+    report = client.quality_check(
+        outline=state.get("global_outline", ""),
+        integrated_story=state.get("integrated_draft", ""),
+        role_ids=state.get("roles", []),
+    )
+    return {**state, "quality_report": report}
+
+
 def finalize_output(state: StoryState) -> StoryState:
     final_story = state.get("integrated_draft", "")
+    quality_report = state.get("quality_report", "")
+    if quality_report and "FAIL" in quality_report.upper():
+        final_story = (
+            "[Quality Check: FAIL]\n"
+            "The integrated story may contain consistency issues.\n\n"
+            + final_story
+        )
+
     run_id = insert_story_run(
         topic=state.get("topic", ""),
         style=state.get("style", ""),
@@ -102,6 +125,7 @@ def build_graph():
     graph.add_node("plan_global_story", plan_global_story)
     graph.add_node("generate_role_views", generate_role_views)
     graph.add_node("integrate_perspectives", integrate_perspectives)
+    graph.add_node("quality_check", quality_check)
     graph.add_node("finalize_output", finalize_output)
 
     graph.add_edge(START, "collect_requirements")
@@ -109,7 +133,8 @@ def build_graph():
     graph.add_edge("load_roles", "plan_global_story")
     graph.add_edge("plan_global_story", "generate_role_views")
     graph.add_edge("generate_role_views", "integrate_perspectives")
-    graph.add_edge("integrate_perspectives", "finalize_output")
+    graph.add_edge("integrate_perspectives", "quality_check")
+    graph.add_edge("quality_check", "finalize_output")
     graph.add_edge("finalize_output", END)
 
     return graph.compile()

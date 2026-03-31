@@ -11,11 +11,12 @@
 3. plan_global_story
 4. generate_role_views
 5. integrate_perspectives
-6. finalize_output
+6. quality_check
+7. finalize_output
 
 图路径：
 
-`START -> collect_requirements -> load_roles -> plan_global_story -> generate_role_views -> integrate_perspectives -> finalize_output -> END`
+`START -> collect_requirements -> load_roles -> plan_global_story -> generate_role_views -> integrate_perspectives -> quality_check -> finalize_output -> END`
 
 ## 2. 节点职责
 
@@ -27,25 +28,32 @@
 
 ### 2.2 load_roles
 
-- 读取每个角色的 profile.md 与 memory.md。
+- 读取每个角色的 profile.md 与记忆切片目录。
+- 从 `memory/<role_id>/*.md` 聚合角色记忆切片。
 - 将角色资产写入 SQLite 的 role_assets 表（upsert）。
 
 ### 2.3 plan_global_story
 
 - 生成全局剧情框架（global_outline）。
-- 当前是占位策略，后续可接入 Ollama 进行真实规划。
+- 调用 Ollama 规划模型生成三幕式主线和共享事实。
 
 ### 2.4 generate_role_views
 
 - 在统一 global_outline 下，按角色分别生成视角稿。
+- 每个角色调用 Ollama 角色模型，结合 profile 与 memory 输出角色视角。
 - 输出 role_view_drafts（role_id -> text）。
 
 ### 2.5 integrate_perspectives
 
 - 将多角色视角稿整合为 integrated_draft。
-- 当前是规则拼接，后续可替换为 LLM 整合节点。
+- 调用 Ollama 整合模型，输出统一正文。
 
-### 2.6 finalize_output
+### 2.6 quality_check
+
+- 调用 Ollama 质检模型进行一致性和角色区分度评估。
+- 输出 quality_report（PASS/FAIL + 关键问题 + 修改建议）。
+
+### 2.7 finalize_output
 
 - 生成 final_story。
 - 将整次运行写入 SQLite 的 story_runs 表。
@@ -57,15 +65,30 @@
 
 ```
 role/
-  alice/
+  Reshaely/
     profile.md
-    memory.md
-  bob/
+  VanlyShan/
     profile.md
-    memory.md
+  SolinXuan/
+    profile.md
 ```
 
-### 3.2 SQLite
+### 3.2 记忆切片目录
+
+```
+memory/
+  Reshaely/
+    case_library_midnight.md
+    case_clocktower_signal.md
+  VanlyShan/
+    case_library_midnight.md
+    case_clocktower_signal.md
+  SolinXuan/
+    case_library_midnight.md
+    case_clocktower_signal.md
+```
+
+### 3.3 SQLite
 
 默认数据库路径：`.data/story_teller.db`
 
@@ -74,8 +97,25 @@ role/
 - role_assets: 角色设定与记忆快照
 - story_runs: 每次故事生成运行记录
 
+### 3.4 环境配置
+
+- `.env`：本地配置文件，不被 git 跟踪。
+- `.env.example`：配置模板，受 git 跟踪。
+- 默认 Ollama 地址：`http://127.0.0.1:11434`
+- 默认模型：`Qwen3.5:9b`
+
 ## 4. 后续扩展建议
 
-1. 使用 Ollama 替换 plan_global_story / generate_role_views / integrate_perspectives 占位逻辑。
-2. 在 quality_check 节点补充跨角色冲突检测。
-3. 将 role memory 更新回写到 memory.md 与 SQLite，形成长期记忆闭环。
+1. 在 quality_check 后增加条件路由，FAIL 时触发自动重写回路。
+2. 将 role memory 更新回写到 `memory/<role_id>/<story_id>.md` 与 SQLite，形成长期记忆闭环。
+3. 增加角色并行与限流策略，提升多角色生成性能。
+
+## 5. 脚本组织
+
+统一脚本目录：`scripts/`
+
+- `scripts/test_role_ops.py`：角色设定/记忆增删接口测试与初始化样例。
+
+CLI 封装目录：`tools/`
+
+- `tools/role_cli.py`：角色设定/记忆接口命令行封装。

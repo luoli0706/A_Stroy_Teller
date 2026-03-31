@@ -14,6 +14,7 @@ class StoryState(TypedDict, total=False):
     global_outline: str
     role_view_drafts: dict[str, str]
     integrated_draft: str
+    quality_report: str
     final_story: str
     run_id: int
     sqlite_db_path: str
