@@ -245,7 +245,7 @@ python tools/role_cli.py delete-all-memory bob
 
 ## 11. Flet UI 客户端
 
-文件：`ui/flet_app.py`
+文件：`UI/flet_app.py`
 
 当前 UI 能力：
 

@@ -17,11 +17,17 @@ A lightweight user client for A Story Teller.
 ## Run
 
 ```bash
-python ui/flet_app.py
+python UI/flet_app.py
 ```
 
 Or:
 
 ```bash
-flet run ui/flet_app.py
+flet run UI/flet_app.py
+```
+
+Module form:
+
+```bash
+python -m UI.flet_app
 ```
