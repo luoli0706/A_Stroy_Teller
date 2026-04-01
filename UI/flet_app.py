@@ -22,6 +22,7 @@ from app.role_memory import (
     discover_roles,
 )
 from app.runtime import build_input_state, stream_story_events
+from app.story_framework import load_story_framework
 from app.sqlite_store import get_story_run, list_story_runs
 
 
@@ -34,9 +35,47 @@ I18N = {
         "nav_settings": "设置",
         "story_input": "故事输入",
         "story_id": "故事框架 ID",
+        "story_tab_framework": "故事框架",
+        "story_tab_generation": "故事生成",
+        "story_route_hint": "当前路由: 页={page} | 故事标签={story_tab} | 生成子标签={generation_tab}",
+        "framework_id": "框架查询 ID",
+        "framework_preview": "框架内容预览",
+        "query_framework": "查询框架",
+        "refresh_frameworks": "刷新框架列表",
+        "framework_load": "加载框架",
+        "frameworks_header": "可用框架",
+        "framework_resolved": "当前加载框架: {story_id}",
+        "framework_resolved_none": "当前加载框架: 无",
+        "story_framework_guide": "步骤: 1) 输入框架ID并查询或从列表加载；2) 确认\"当前加载框架\"。",
+        "framework_query_required": "请输入框架 ID。",
+        "framework_loaded": "已加载框架: {story_id}",
+        "no_frameworks": "暂无可用框架。",
         "topic": "主题",
         "style": "风格",
         "roles": "角色（逗号分隔）",
+        "story_mode": "生成模式",
+        "generation_subtabs": "故事生成子标签",
+        "generation_single_panel": "单角色生成面板",
+        "generation_multi_panel": "多角色生成面板",
+        "story_mode_single": "生成模式: 单角色",
+        "story_mode_multi": "生成模式: 多角色",
+        "story_role_name": "生成角色名字（英文）",
+        "story_role_pool": "角色加载池",
+        "generation_tab_single": "单角色生成",
+        "generation_tab_multi": "多角色生成",
+        "selected_story_role": "当前单角色: {role_id}",
+        "selected_story_role_none": "当前单角色: 无",
+        "load_role_for_story": "加载角色到生成器",
+        "load_all_roles_for_story": "加载全部角色",
+        "generate_single_story": "生成单角色故事",
+        "generate_multi_story": "生成多角色故事",
+        "story_role_required": "请先选择或输入单角色。",
+        "story_roles_required": "请先加载或填写多角色列表。",
+        "story_role_loaded": "已加载生成角色: {role_id}",
+        "story_roles_loaded": "已加载全部角色: {count}",
+        "story_memory_saved": "单角色故事已写入记忆: {role_id}/{story_id}",
+        "story_memory_save_failed": "写入角色记忆失败: {message}",
+        "story_generation_guide": "步骤: 1) 先加载角色；2) 选择单角色或多角色子标签；3) 点击对应生成按钮。",
         "max_retry": "最大重试",
         "run_story": "运行故事",
         "export_opt": "导出到 opt",
@@ -48,6 +87,9 @@ I18N = {
         "ui_ready": "UI 已就绪",
         "run_meta_init": "运行: -",
         "event_stream": "事件流",
+        "show_event_stream": "显示事件流",
+        "hide_event_stream": "隐藏事件流",
+        "event_stream_hint": "暂无事件。点击生成后将实时显示节点日志与 token。",
         "outputs": "输出",
         "token_stream": "Token 流",
         "quality_report": "质量报告",
@@ -122,9 +164,47 @@ I18N = {
         "nav_settings": "Settings",
         "story_input": "Story Input",
         "story_id": "Story ID",
+        "story_tab_framework": "Framework",
+        "story_tab_generation": "Generation",
+        "story_route_hint": "Route: page={page} | story tab={story_tab} | generation tab={generation_tab}",
+        "framework_id": "Framework Query ID",
+        "framework_preview": "Framework Preview",
+        "query_framework": "Query Framework",
+        "refresh_frameworks": "Refresh Frameworks",
+        "framework_load": "Load Framework",
+        "frameworks_header": "Available Frameworks",
+        "framework_resolved": "Loaded Framework: {story_id}",
+        "framework_resolved_none": "Loaded Framework: none",
+        "story_framework_guide": "Steps: 1) Query by framework ID or load from list; 2) confirm the loaded framework.",
+        "framework_query_required": "Please input a framework ID.",
+        "framework_loaded": "Loaded framework: {story_id}",
+        "no_frameworks": "No frameworks found.",
         "topic": "Topic",
         "style": "Style",
         "roles": "Roles (comma-separated)",
+        "story_mode": "Generation Mode",
+        "generation_subtabs": "Generation Sub-Tabs",
+        "generation_single_panel": "Single-Role Generation Panel",
+        "generation_multi_panel": "Multi-Role Generation Panel",
+        "story_mode_single": "Mode: single role",
+        "story_mode_multi": "Mode: multiple roles",
+        "story_role_name": "Generator Role Name (EN)",
+        "story_role_pool": "Role Loading Pool",
+        "generation_tab_single": "Single-Role",
+        "generation_tab_multi": "Multi-Role",
+        "selected_story_role": "Current Single Role: {role_id}",
+        "selected_story_role_none": "Current Single Role: none",
+        "load_role_for_story": "Load Role To Generator",
+        "load_all_roles_for_story": "Load All Roles",
+        "generate_single_story": "Generate Single-Role Story",
+        "generate_multi_story": "Generate Multi-Role Story",
+        "story_role_required": "Select or input one role first.",
+        "story_roles_required": "Load or input multiple roles first.",
+        "story_role_loaded": "Loaded generator role: {role_id}",
+        "story_roles_loaded": "Loaded all roles: {count}",
+        "story_memory_saved": "Single-role story saved to memory: {role_id}/{story_id}",
+        "story_memory_save_failed": "Failed to persist role memory: {message}",
+        "story_generation_guide": "Steps: 1) Load roles first; 2) choose single-role or multi-role tab; 3) click generate.",
         "max_retry": "Max Retry",
         "run_story": "Run Story",
         "export_opt": "Export To opt",
@@ -136,6 +216,9 @@ I18N = {
         "ui_ready": "UI ready",
         "run_meta_init": "Run: -",
         "event_stream": "Event Stream",
+        "show_event_stream": "Show Event Stream",
+        "hide_event_stream": "Hide Event Stream",
+        "event_stream_hint": "No events yet. Start generation to see node logs and token stream here.",
         "outputs": "Outputs",
         "token_stream": "Token Stream",
         "quality_report": "Quality Report",
@@ -243,7 +326,8 @@ def main(page: ft.Page) -> None:
     run_meta_text = ft.Text(tr("run_meta_init"), selectable=True)
     ui_status_text = ft.Text(tr("ui_ready"), color="#555")
 
-    event_log = ft.ListView(expand=True, spacing=6, auto_scroll=True)
+    event_stream_log = ft.Column(expand=True, spacing=4, scroll=ft.ScrollMode.AUTO)
+    event_stream_hint_text = ft.Text(tr("event_stream_hint"), color="#6a7486", size=11)
     history_log = ft.ListView(expand=True, spacing=6, auto_scroll=True)
     role_list = ft.ListView(expand=True, spacing=6, auto_scroll=True)
     token_stream = ft.TextField(
@@ -271,9 +355,35 @@ def main(page: ft.Page) -> None:
         value="",
     )
 
-    run_button = ft.Button(tr("run_story"))
+    run_single_button = ft.Button(tr("generate_single_story"))
+    run_single_quick_button = ft.OutlinedButton(tr("generate_single_story"))
+    run_multi_button = ft.Button(tr("generate_multi_story"))
     check_button = ft.OutlinedButton(tr("check_health"))
     export_button = ft.OutlinedButton(tr("export_opt"))
+
+    story_framework_id_input = ft.TextField(label=tr("framework_id"), value=story_id.value, width=220)
+    framework_preview_input = ft.TextField(
+        label=tr("framework_preview"),
+        multiline=True,
+        min_lines=5,
+        max_lines=6,
+        read_only=True,
+        value="",
+        bgcolor="#ffffff",
+    )
+    framework_selector = ft.Dropdown(width=260, options=[])
+    resolved_framework_id = {"value": ""}
+    framework_resolved_text = ft.Text(tr("framework_resolved_none"), color="#555", selectable=True)
+
+    story_selected_role = {"value": ""}
+    story_generation_mode = {"value": "multi"}
+    story_tab_state = {"value": "generation"}
+    generation_tab_state = {"value": "multi"}
+    page_state = {"value": "story"}
+    story_role_name_input = ft.TextField(label=tr("story_role_name"), width=260)
+    story_selected_role_text = ft.Text(tr("selected_story_role_none"), color="#555", selectable=True)
+    story_role_selector = ft.Dropdown(width=260, options=[])
+    story_route_hint_text = ft.Text("", color="#6a7486", size=11, selectable=True)
 
     role_id_input = ft.TextField(label=tr("role_id"), width=220)
     role_name_input = ft.TextField(label=tr("role_name"), width=240)
@@ -303,8 +413,14 @@ def main(page: ft.Page) -> None:
     roles_list_header = ft.Text(tr("roles_header"), size=16, weight=ft.FontWeight.W_600)
     settings_header = ft.Text(tr("settings"), size=18, weight=ft.FontWeight.W_600)
 
+    def render_event_stream_hint() -> None:
+        if not event_stream_log.controls:
+            event_stream_log.controls.append(event_stream_hint_text)
+
     def add_event_line(text: str, color: str = "#222") -> None:
-        event_log.controls.append(ft.Text(text, size=12, color=color, selectable=True))
+        if event_stream_log.controls and event_stream_log.controls[0] is event_stream_hint_text:
+            event_stream_log.controls.clear()
+        event_stream_log.controls.append(ft.Text(text, size=12, color=color, selectable=True))
         page.update()
 
     def set_ui_status(text: str, color: str = "#555") -> None:
@@ -409,6 +525,134 @@ def main(page: ft.Page) -> None:
         if partial:
             return partial[0]
         return None
+
+    def _list_story_framework_ids() -> list[str]:
+        stories_root = Path("stories")
+        if not stories_root.exists():
+            return []
+        return sorted(
+            child.name
+            for child in stories_root.iterdir()
+            if child.is_dir() and (child / "framework.md").exists()
+        )
+
+    def render_frameworks() -> None:
+        framework_ids = _list_story_framework_ids()
+        framework_selector.options = [ft.dropdown.Option(key=item, text=item) for item in framework_ids]
+        if framework_ids and (framework_selector.value not in framework_ids):
+            framework_selector.value = framework_ids[0]
+        if not framework_ids:
+            framework_selector.value = None
+        page.update()
+
+    def load_framework_to_editor(target_story_id: str, announce: bool = True) -> None:
+        requested_id = target_story_id.strip()
+        if not requested_id:
+            set_ui_status(tr("framework_query_required"), "#a21515")
+            return
+
+        resolved_story_id, framework_text = load_story_framework(requested_id, "stories")
+        story_framework_id_input.value = requested_id
+        story_id.value = resolved_story_id
+        framework_preview_input.value = framework_text
+        resolved_framework_id["value"] = resolved_story_id
+        framework_resolved_text.value = tr("framework_resolved", story_id=resolved_story_id)
+        if announce:
+            set_ui_status(tr("framework_loaded", story_id=resolved_story_id), "#0f7a2a")
+        page.update()
+
+    def handle_query_framework(_: ft.ControlEvent) -> None:
+        load_framework_to_editor(story_framework_id_input.value)
+
+    def handle_load_selected_framework(_: ft.ControlEvent) -> None:
+        selected = (framework_selector.value or "").strip()
+        if not selected:
+            set_ui_status(tr("no_frameworks"), "#a21515")
+            return
+        load_framework_to_editor(selected)
+
+    def handle_framework_selector(_: ft.ControlEvent) -> None:
+        story_framework_id_input.value = (framework_selector.value or "").strip()
+        page.update()
+
+    def load_story_role_to_generator(role_id: str, announce: bool = True) -> None:
+        story_selected_role["value"] = role_id
+        story_role_name_input.value = role_id
+        story_selected_role_text.value = tr("selected_story_role", role_id=role_id)
+
+        current_roles = [item.strip() for item in roles.value.split(",") if item.strip()]
+        if role_id not in current_roles:
+            current_roles.append(role_id)
+            roles.value = ",".join(current_roles)
+
+        if announce:
+            set_ui_status(tr("story_role_loaded", role_id=role_id), "#0f7a2a")
+        page.update()
+
+    def render_story_role_pool() -> None:
+        role_ids = discover_roles("role")
+        story_role_selector.options = [ft.dropdown.Option(key=item, text=item) for item in role_ids]
+        if role_ids and (story_role_selector.value not in role_ids):
+            story_role_selector.value = role_ids[0]
+        if not role_ids:
+            story_role_selector.value = None
+        page.update()
+
+    def handle_load_story_role_by_name(_: ft.ControlEvent) -> None:
+        role_name = story_role_name_input.value.strip()
+        role_id = _find_role_id_by_name(role_name)
+        if not role_id:
+            role_id = (story_role_selector.value or "").strip() or None
+        if not role_id:
+            set_ui_status(tr("role_not_found", name=role_name), "#a21515")
+            return
+        load_story_role_to_generator(role_id)
+        render_story_role_pool()
+
+    def handle_story_role_selector(_: ft.ControlEvent) -> None:
+        selected = (story_role_selector.value or "").strip()
+        if not selected:
+            return
+        load_story_role_to_generator(selected)
+        render_story_role_pool()
+
+    def handle_load_all_story_roles(_: ft.ControlEvent) -> None:
+        role_ids = discover_roles("role")
+        if not role_ids:
+            set_ui_status(tr("no_roles"), "#a21515")
+            return
+
+        roles.value = ",".join(role_ids)
+        if story_selected_role["value"] not in role_ids:
+            load_story_role_to_generator(role_ids[0], announce=False)
+        set_ui_status(tr("story_roles_loaded", count=len(role_ids)), "#0f7a2a")
+        render_story_role_pool()
+
+    def persist_single_role_memory(role_id: str, final_state: dict[str, Any]) -> None:
+        final_text = str(final_state.get("final_story", "")).strip()
+        if not final_text:
+            return
+
+        resolved_story = str(final_state.get("story_id", "")).strip() or story_id.value.strip() or "default"
+        run_id = final_state.get("run_id")
+        if run_id is not None:
+            memory_story_id = f"generated_{resolved_story}_{run_id}"
+        else:
+            memory_story_id = f"generated_{resolved_story}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+        memory_text = (
+            "# Generated Story Memory\n\n"
+            f"- role: {role_id}\n"
+            f"- topic: {final_state.get('topic', topic.value)}\n"
+            f"- style: {final_state.get('style', style.value)}\n"
+            f"- story_id: {resolved_story}\n"
+            f"- run_id: {final_state.get('run_id', 'n/a')}\n\n"
+            "## Story\n\n"
+            f"{final_text}\n"
+        )
+
+        add_role_memory_slice(role_id, memory_story_id, memory_text)
+        set_ui_status(tr("story_memory_saved", role_id=role_id, story_id=memory_story_id), "#0f7a2a")
 
     def render_memory_slice_tabs(role_id: str) -> None:
         memory_slice_tabs.controls.clear()
@@ -622,6 +866,7 @@ def main(page: ft.Page) -> None:
         max_retry.label = tr("max_retry")
 
         token_stream.label = tr("token_stream")
+        event_stream_hint_text.value = tr("event_stream_hint")
         quality_report.label = tr("quality_report")
         final_story.label = tr("final_story")
 
@@ -633,9 +878,21 @@ def main(page: ft.Page) -> None:
         roles_list_header.value = tr("roles_header")
         settings_header.value = tr("settings")
 
-        run_button.content = tr("run_story")
+        run_single_button.content = tr("generate_single_story")
+        run_single_quick_button.content = tr("generate_single_story")
+        run_multi_button.content = tr("generate_multi_story")
+        generation_single_tab_button.content = tr("generation_tab_single")
+        generation_multi_tab_button.content = tr("generation_tab_multi")
         export_button.content = tr("export_opt")
         check_button.content = tr("check_health")
+        query_framework_button.content = tr("query_framework")
+        load_selected_framework_button.content = tr("framework_load")
+        refresh_frameworks_button.content = tr("refresh_frameworks")
+        story_framework_tab_button.content = tr("story_tab_framework")
+        story_generation_tab_button.content = tr("story_tab_generation")
+        load_story_role_button.content = tr("load_role_for_story")
+        load_all_story_roles_single_button.content = tr("load_all_roles_for_story")
+        load_all_story_roles_multi_button.content = tr("load_all_roles_for_story")
         refresh_history_button.content = tr("refresh_history")
         refresh_roles_button.content = tr("refresh_roles")
         refresh_settings_button.content = tr("refresh_settings")
@@ -649,9 +906,39 @@ def main(page: ft.Page) -> None:
 
         role_id_input.label = tr("role_id")
         role_name_input.label = tr("role_name")
+        story_role_name_input.label = tr("story_role_name")
+        story_role_selector.label = tr("story_role_pool")
         profile_input.label = tr("role_profile")
         memory_story_id_input.label = tr("memory_story_id")
         memory_text_input.label = tr("memory_slice_text")
+        story_framework_id_input.label = tr("framework_id")
+        framework_selector.label = tr("frameworks_header")
+        framework_preview_input.label = tr("framework_preview")
+        story_mode_header.value = tr("story_mode")
+        generation_subtabs_header.value = tr("generation_subtabs")
+        generation_single_panel_header.value = tr("generation_single_panel")
+        generation_multi_panel_header.value = tr("generation_multi_panel")
+        frameworks_header_text.value = tr("frameworks_header")
+        framework_guide_text.value = tr("story_framework_guide")
+        generation_guide_text.value = tr("story_generation_guide")
+        story_route_hint_text.value = tr(
+            "story_route_hint",
+            page=page_state["value"],
+            story_tab=story_tab_state["value"],
+            generation_tab=generation_tab_state["value"],
+        )
+        if resolved_framework_id["value"]:
+            framework_resolved_text.value = tr("framework_resolved", story_id=resolved_framework_id["value"])
+        else:
+            framework_resolved_text.value = tr("framework_resolved_none")
+        if story_generation_mode["value"] == "single":
+            story_mode_text.value = tr("story_mode_single")
+        else:
+            story_mode_text.value = tr("story_mode_multi")
+        if story_selected_role["value"]:
+            story_selected_role_text.value = tr("selected_story_role", role_id=story_selected_role["value"])
+        else:
+            story_selected_role_text.value = tr("selected_story_role_none")
         memory_slice_header.value = tr("memory_slices")
         if selected_memory_slice["value"]:
             active_memory_slice_text.value = tr("active_memory_slice", story_id=selected_memory_slice["value"])
@@ -674,9 +961,12 @@ def main(page: ft.Page) -> None:
             selected_run_text.value = tr("selected_run_none")
             ui_status_text.value = tr("ui_ready")
             ui_status_text.color = "#555"
+        render_event_stream_hint()
 
         render_history()
         render_roles()
+        render_frameworks()
+        render_story_role_pool()
         current_role_id = role_id_input.value.strip()
         if current_role_id:
             render_memory_slice_tabs(current_role_id)
@@ -687,11 +977,21 @@ def main(page: ft.Page) -> None:
         current_lang["value"] = selected if selected in I18N else "zh"
         apply_locale()
 
-    def run_worker() -> None:
-        run_button.disabled = True
+    def update_story_route_hint() -> None:
+        story_route_hint_text.value = tr(
+            "story_route_hint",
+            page=page_state["value"],
+            story_tab=story_tab_state["value"],
+            generation_tab=generation_tab_state["value"],
+        )
+
+    def run_worker(selected_roles: list[str]) -> None:
+        run_single_button.disabled = True
+        run_single_quick_button.disabled = True
+        run_multi_button.disabled = True
         status_text.value = tr("status_running")
         status_text.color = "#1f4e8c"
-        event_log.controls.clear()
+        event_stream_log.controls.clear()
         token_stream.value = ""
         final_story.value = ""
         quality_report.value = ""
@@ -699,12 +999,14 @@ def main(page: ft.Page) -> None:
         page.update()
 
         try:
-            role_list = [item.strip() for item in roles.value.split(",") if item.strip()]
+            if not selected_roles:
+                raise ValueError(tr("story_roles_required"))
+
             state = build_input_state(
                 story_id=story_id.value.strip() or "default",
                 topic=topic.value.strip() or "an unexpected friendship",
                 style=style.value.strip() or "warm",
-                roles=role_list,
+                roles=selected_roles,
                 max_retry=int(max_retry.value.strip() or "1"),
             )
 
@@ -760,19 +1062,55 @@ def main(page: ft.Page) -> None:
             )
             render_history()
 
+            if story_generation_mode["value"] == "single" and len(selected_roles) == 1:
+                try:
+                    persist_single_role_memory(selected_roles[0], final_state)
+                except Exception as memory_exc:
+                    add_event_line(tr("story_memory_save_failed", message=memory_exc), "#a21515")
+
         except Exception as exc:
             status_text.value = tr("status_failed", error=exc)
             status_text.color = "#a21515"
             add_event_line(tr("stream_exception", message=exc), "#a21515")
         finally:
-            run_button.disabled = False
+            run_single_button.disabled = False
+            run_single_quick_button.disabled = False
+            run_multi_button.disabled = False
+            render_event_stream_hint()
             page.update()
 
-    def on_run(_: ft.ControlEvent) -> None:
-        thread = threading.Thread(target=run_worker, daemon=True)
+    def on_run_single(_: ft.ControlEvent) -> None:
+        role_name = story_role_name_input.value.strip()
+        role_id = (
+            story_selected_role["value"]
+            or _find_role_id_by_name(role_name)
+            or (story_role_selector.value or "").strip()
+        )
+        if not role_id:
+            set_ui_status(tr("story_role_required"), "#a21515")
+            return
+
+        story_generation_mode["value"] = "single"
+        story_mode_text.value = tr("story_mode_single")
+        load_story_role_to_generator(role_id, announce=False)
+        render_story_role_pool()
+        thread = threading.Thread(target=run_worker, args=([role_id],), daemon=True)
         thread.start()
 
-    run_button.on_click = on_run
+    def on_run_multi(_: ft.ControlEvent) -> None:
+        selected_roles = [item.strip() for item in roles.value.split(",") if item.strip()]
+        if not selected_roles:
+            set_ui_status(tr("story_roles_required"), "#a21515")
+            return
+
+        story_generation_mode["value"] = "multi"
+        story_mode_text.value = tr("story_mode_multi")
+        thread = threading.Thread(target=run_worker, args=(selected_roles,), daemon=True)
+        thread.start()
+
+    run_single_button.on_click = on_run_single
+    run_single_quick_button.on_click = on_run_single
+    run_multi_button.on_click = on_run_multi
     check_button.on_click = handle_health
     export_button.on_click = handle_export
 
@@ -783,11 +1121,29 @@ def main(page: ft.Page) -> None:
     delete_all_memory_button = ft.OutlinedButton("Delete All Memories", on_click=handle_delete_all_memories)
     query_profile_button = ft.OutlinedButton("Query Profile", on_click=handle_query_role_profile)
     load_role_by_name_button = ft.OutlinedButton("Load By Name", on_click=handle_load_role_by_name)
+    query_framework_button = ft.OutlinedButton("Query Framework", on_click=handle_query_framework)
+    load_selected_framework_button = ft.OutlinedButton("Load Framework", on_click=handle_load_selected_framework)
+    refresh_frameworks_button = ft.OutlinedButton("Refresh Frameworks", on_click=lambda _: render_frameworks())
+    load_story_role_button = ft.OutlinedButton("Load Role To Generator", on_click=handle_load_story_role_by_name)
+    load_all_story_roles_single_button = ft.OutlinedButton("Load All Roles", on_click=handle_load_all_story_roles)
+    load_all_story_roles_multi_button = ft.OutlinedButton("Load All Roles", on_click=handle_load_all_story_roles)
+    story_framework_tab_button = ft.OutlinedButton("Framework")
+    story_generation_tab_button = ft.OutlinedButton("Generation")
+    generation_single_tab_button = ft.OutlinedButton("Single-Role")
+    generation_multi_tab_button = ft.OutlinedButton("Multi-Role")
     refresh_history_button = ft.OutlinedButton("Refresh History", on_click=lambda _: render_history())
     refresh_roles_button = ft.OutlinedButton("Refresh Roles", on_click=lambda _: render_roles())
     refresh_settings_button = ft.OutlinedButton("Refresh Settings", on_click=lambda _: refresh_settings_snapshot())
 
     memory_slice_header = ft.Text(tr("memory_slices"), size=16, weight=ft.FontWeight.W_600)
+    story_mode_header = ft.Text(tr("story_mode"), size=16, weight=ft.FontWeight.W_600)
+    generation_subtabs_header = ft.Text(tr("generation_subtabs"), size=16, weight=ft.FontWeight.W_600)
+    generation_single_panel_header = ft.Text(tr("generation_single_panel"), size=15, weight=ft.FontWeight.W_600)
+    generation_multi_panel_header = ft.Text(tr("generation_multi_panel"), size=15, weight=ft.FontWeight.W_600)
+    story_mode_text = ft.Text(tr("story_mode_multi"), color="#555")
+    frameworks_header_text = ft.Text(tr("frameworks_header"), size=16, weight=ft.FontWeight.W_600)
+    framework_guide_text = ft.Text(tr("story_framework_guide"), color="#5a6780", size=11)
+    generation_guide_text = ft.Text(tr("story_generation_guide"), color="#5a6780", size=11)
 
     language_dropdown = ft.Dropdown(
         label=tr("language"),
@@ -800,10 +1156,122 @@ def main(page: ft.Page) -> None:
         on_select=on_language_change,
     )
 
-    form_row_1 = ft.Row([story_id, style, max_retry], wrap=True)
-    form_row_2 = ft.Row([topic], wrap=True)
-    form_row_3 = ft.Row([roles], wrap=True)
-    action_row = ft.Row([run_button, export_button, status_text], alignment=ft.MainAxisAlignment.START)
+    framework_selector.on_select = handle_framework_selector
+    story_role_selector.on_select = handle_story_role_selector
+
+    generation_row_1 = ft.Row([story_id, style, max_retry], wrap=True)
+    generation_row_2 = ft.Row([topic], wrap=True)
+    generation_row_3 = ft.Row([roles], wrap=True)
+    generation_role_row = ft.Row([story_role_name_input, story_role_selector, load_story_role_button], wrap=True)
+    generation_action_row = ft.Row(
+        [run_single_quick_button, export_button, status_text],
+        alignment=ft.MainAxisAlignment.START,
+        wrap=True,
+    )
+
+    framework_query_row = ft.Row([story_framework_id_input, query_framework_button, refresh_frameworks_button], wrap=True)
+    framework_select_row = ft.Row([framework_selector, load_selected_framework_button], wrap=True)
+
+    story_framework_tab = ft.Container(
+        visible=True,
+        expand=True,
+        padding=12,
+        border_radius=10,
+        border=ft.Border.all(1, "#d7dce5"),
+        bgcolor="#ffffff",
+        content=ft.Column(
+            [
+                framework_guide_text,
+                framework_query_row,
+                framework_select_row,
+                framework_resolved_text,
+                framework_preview_input,
+            ],
+            spacing=10,
+            expand=True,
+            scroll=ft.ScrollMode.AUTO,
+        ),
+    )
+
+    generation_single_tab = ft.Container(
+        visible=True,
+        expand=True,
+        padding=12,
+        border_radius=10,
+        border=ft.Border.all(1, "#d7dce5"),
+        bgcolor="#ffffff",
+        content=ft.Column(
+            [
+                generation_single_panel_header,
+                story_selected_role_text,
+                ft.Row([load_all_story_roles_single_button, run_single_button], wrap=True),
+            ],
+            expand=True,
+            spacing=10,
+            scroll=ft.ScrollMode.AUTO,
+        ),
+    )
+
+    generation_multi_tab = ft.Container(
+        visible=True,
+        expand=True,
+        padding=12,
+        border_radius=10,
+        border=ft.Border.all(1, "#d7dce5"),
+        bgcolor="#ffffff",
+        content=ft.Column(
+            [
+                generation_multi_panel_header,
+                generation_row_3,
+                ft.Row([load_all_story_roles_multi_button], wrap=True),
+                ft.Row([run_multi_button], wrap=True),
+            ],
+            expand=True,
+            spacing=10,
+            scroll=ft.ScrollMode.AUTO,
+        ),
+    )
+
+    generation_tab_host = ft.Container(
+        height=190,
+        padding=4,
+        content=generation_multi_tab,
+    )
+
+    story_generation_tab = ft.Container(
+        visible=True,
+        expand=True,
+        padding=12,
+        border_radius=10,
+        border=ft.Border.all(1, "#d7dce5"),
+        bgcolor="#ffffff",
+        content=ft.Column(
+            [
+                generation_guide_text,
+                generation_row_1,
+                generation_row_2,
+                generation_role_row,
+                story_mode_header,
+                story_mode_text,
+                generation_subtabs_header,
+                ft.Row([generation_single_tab_button, generation_multi_tab_button], wrap=True),
+                generation_tab_host,
+                generation_action_row,
+            ],
+            expand=True,
+            spacing=10,
+            scroll=ft.ScrollMode.AUTO,
+        ),
+    )
+
+    story_tab_host = ft.Container(
+        height=430,
+        padding=8,
+        border_radius=10,
+        border=ft.Border.all(1, "#d7dce5"),
+        bgcolor="#ffffff",
+        content=story_generation_tab,
+    )
 
     story_page = ft.Container(
         visible=True,
@@ -821,24 +1289,34 @@ def main(page: ft.Page) -> None:
                             content=ft.Column(
                                 [
                                     story_input_header,
-                                    form_row_1,
-                                    form_row_2,
-                                    form_row_3,
-                                    action_row,
+                                    ft.Row([story_framework_tab_button, story_generation_tab_button], wrap=True),
+                                    story_route_hint_text,
+                                    story_tab_host,
                                     run_meta_text,
                                     ui_status_text,
-                                    ft.Divider(),
-                                    event_stream_header,
                                     ft.Container(
-                                        content=event_log,
                                         border=ft.Border.all(1, "#d7dce5"),
-                                        padding=8,
                                         border_radius=10,
-                                        expand=True,
+                                        padding=10,
+                                        bgcolor="#ffffff",
+                                        content=ft.Column(
+                                            [
+                                                event_stream_header,
+                                                ft.Container(
+                                                    content=event_stream_log,
+                                                    border=ft.Border.all(1, "#d7dce5"),
+                                                    border_radius=8,
+                                                    padding=8,
+                                                    bgcolor="#ffffff",
+                                                    height=96,
+                                                ),
+                                            ],
+                                            spacing=8,
+                                        ),
                                     ),
                                 ],
-                                expand=True,
                                 spacing=12,
+                                scroll=ft.ScrollMode.AUTO,
                             ),
                         ),
                         ft.Container(
@@ -946,7 +1424,26 @@ def main(page: ft.Page) -> None:
         ),
     )
 
+    def switch_story_tab(target: str) -> None:
+        story_tab_state["value"] = "framework" if target == "framework" else "generation"
+        story_tab_host.content = story_framework_tab if story_tab_state["value"] == "framework" else story_generation_tab
+        story_framework_tab_button.disabled = story_tab_state["value"] == "framework"
+        story_generation_tab_button.disabled = story_tab_state["value"] == "generation"
+        update_story_route_hint()
+        page.update()
+
+    def switch_generation_tab(target: str) -> None:
+        generation_tab_state["value"] = "single" if target == "single" else "multi"
+        generation_tab_host.content = generation_single_tab if generation_tab_state["value"] == "single" else generation_multi_tab
+        generation_single_tab_button.disabled = generation_tab_state["value"] == "single"
+        generation_multi_tab_button.disabled = generation_tab_state["value"] == "multi"
+        story_generation_mode["value"] = generation_tab_state["value"]
+        story_mode_text.value = tr("story_mode_single") if generation_tab_state["value"] == "single" else tr("story_mode_multi")
+        update_story_route_hint()
+        page.update()
+
     def switch_page(target: str) -> None:
+        page_state["value"] = "story" if target == "story" else ("role" if target == "role" else "settings")
         story_page.visible = target == "story"
         role_page.visible = target == "role"
         settings_page.visible = target == "settings"
@@ -954,11 +1451,16 @@ def main(page: ft.Page) -> None:
         nav_story_button.disabled = story_page.visible
         nav_role_button.disabled = role_page.visible
         nav_settings_button.disabled = settings_page.visible
+        update_story_route_hint()
         page.update()
 
     nav_story_button.on_click = lambda _: switch_page("story")
     nav_role_button.on_click = lambda _: switch_page("role")
     nav_settings_button.on_click = lambda _: switch_page("settings")
+    story_framework_tab_button.on_click = lambda _: switch_story_tab("framework")
+    story_generation_tab_button.on_click = lambda _: switch_story_tab("generation")
+    generation_single_tab_button.on_click = lambda _: switch_generation_tab("single")
+    generation_multi_tab_button.on_click = lambda _: switch_generation_tab("multi")
 
     page.add(
         ft.Column(
@@ -977,8 +1479,18 @@ def main(page: ft.Page) -> None:
 
     render_history()
     render_roles()
+    render_frameworks()
+    render_event_stream_hint()
+    load_framework_to_editor(story_id.value, announce=False)
+    initial_roles = [item.strip() for item in roles.value.split(",") if item.strip()]
+    available_roles = set(discover_roles("role"))
+    if initial_roles and initial_roles[0] in available_roles:
+        load_story_role_to_generator(initial_roles[0], announce=False)
+    render_story_role_pool()
     refresh_settings_snapshot()
     apply_locale()
+    switch_generation_tab("multi")
+    switch_story_tab("generation")
     switch_page("story")
 
 
