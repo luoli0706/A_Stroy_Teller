@@ -1,183 +1,55 @@
-# A Story Teller / 智能故事生成系统
+# A Story Teller / 智能故事生成系统 (Alpha 2)
 
-A Story Teller is a role-centered, multi-perspective storytelling system built with LangGraph + Ollama + ChromaDB.
+A Story Teller 是一个以角色为中心、多视角协同、支持持久化续写的智能故事生成系统。基于 LangGraph + Ollama + ChromaDB 构建。
 
-A Story Teller 是一个基于 LangGraph + Ollama + ChromaDB 的角色中心、多视角智能故事生成系统。
+## 🌟 核心特性
 
-It supports:
+- **多视角并行叙事**：采用全异步并发架构，多名角色同时撰写各自视角，效率提升 400%。
+- **演员扮演机制 (Actor-Slot Mapping)**：角色以“通用演员”身份入驻故事框架，根据大纲自动适配职业、目标与社交关系。
+- **持久化断点续写**：内置 Checkpointer 机制。若生成中断（断电、超时），通过 Thread ID 即可秒级恢复进度。
+- **高效增量 RAG**：基于 SHA-256 哈希的增量索引技术，支持毫秒级海量记忆检索。
+- **结构化质检系统**：强制模型输出 JSON 格式质检报告，自动识别逻辑冲突并提供修正建议。
+- **全链路类型安全**：基于 Pydantic V2 构建系统状态机，确保数据流转万无一失。
 
-- Story framework loading and editing
-- Role profile and memory slice management
-- Single-role and multi-role story generation
-- RAG retrieval from own and peer role memories under the same story framework
-- Chapter timestamp memory slicing after each run
-- Streaming events, logs, SQLite run history, and Flet desktop UI
+## 🛠️ 技术栈
 
-它支持：
+- **编排框架**: [LangGraph](https://github.com/langchain-ai/langgraph) (Async StateGraph)
+- **大模型引擎**: [Ollama](https://ollama.com/) (本地部署)
+- **向量数据库**: [ChromaDB](https://www.trychroma.com/) (原生 C++ 核心加速)
+- **数据校验**: [Pydantic V2](https://docs.pydantic.dev/)
+- **UI 框架**: [Flet](https://flet.dev/) (Flutter for Python)
+- **通信协议**: 全链路异步 [HTTPX](https://www.python-httpx.org/)
 
-- 故事框架加载与编辑
-- 角色设定与记忆切片管理
-- 单角色/多角色故事生成
-- 在同一故事框架下从自身与其他角色记忆切片进行 RAG 检索
-- 生成后按章节时间戳写回记忆切片
-- 流式事件、日志、SQLite 历史记录与 Flet 桌面 UI
+## 🚀 快速开始
 
-## Features / 功能特性
+1. **环境准备**:
+   - 确保安装了 Python 3.10+。
+   - 安装依赖: `pip install -r requirements.txt`。
+   - 启动本地 Ollama 服务并拉取模型 (如 `qwen3.5:9b`, `nomic-embed-text`)。
 
-- LangGraph pipeline with retry route and quality check
-- Ollama local model routing (planner/role/integrator/quality/embedding)
-- ChromaDB vector index for role memory slices
-- Automatic chapter-slice persistence after generation
-- Bilingual UI (Chinese/English)
-- Story, role, and settings page separation in UI modules
+2. **启动应用**:
+   ```bash
+   python UI/flet_app.py
+   ```
 
-- 基于 LangGraph 的可编排流程（含质检与重试）
-- 本地 Ollama 多模型路由（规划/角色/整合/质检/嵌入）
-- 角色记忆切片 ChromaDB 向量索引
-- 生成完成后自动写回章节时间戳切片
-- UI 支持中英切换
-- UI 页面模块化解耦（故事/角色/设置）
+3. **断点续写说明**:
+   - 在 UI 中输入自定义的 `Thread ID`。
+   - 任务执行时，系统会为每个节点保存快照。
+   - 如遇中断，使用相同 `Thread ID` 重新点击生成，系统将自动跳过已完成节点。
 
-## Project Structure / 项目结构
+## 📂 项目结构
 
-```text
-A_Story_Teller/
-  app/                      # Runtime graph, state, RAG, storage, observability
-  UI/                       # Flet client
-  role/                     # Role profiles
-  memory/                   # Role memory slices
-  stories/                  # Story frameworks
-  tools/                    # CLI tools (role CLI, embedding CLI)
-  docs/                     # Flow and API docs (bilingual)
-  RAG/                      # RAG documentation
-  .env.example              # Environment template
-  requirements.txt          # Python dependencies
-```
+- `app/`: 核心逻辑、图编排、LLM 客户端。
+- `UI/`: 组件化前端界面。
+- `memory/`: 角色的长期记忆切片。
+- `stories/`: 故事框架与角色槽位定义。
+- `Reviewer/`: 深度架构评估与蓝图。
+- `tests/`: 自动化集成测试。
 
-## Prerequisites / 环境准备
+## 📝 版本记录
 
-### 1) Python
+详见 `docs/code_history.md` (代码演进) 与 `docs/func_history.md` (功能迭代)。
 
-- Python 3.11+ recommended
+## 许可证
 
-### 2) Ollama
-
-Install and run Ollama locally, then pull required models:
-
-```bash
-ollama pull qwen3.5:9b
-ollama pull nomic-embed-text-v2-moe
-```
-
-本地安装并启动 Ollama，然后拉取所需模型：
-
-```bash
-ollama pull qwen3.5:9b
-ollama pull nomic-embed-text-v2-moe
-```
-
-## Installation / 安装
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-## Configuration / 配置
-
-Copy environment template:
-
-```bash
-copy .env.example .env
-```
-
-Key settings in `.env`:
-
-- `OLLAMA_BASE_URL=http://127.0.0.1:11434`
-- `OLLAMA_MODEL_PLANNER=qwen3.5:9b`
-- `OLLAMA_MODEL_ROLE=qwen3.5:9b`
-- `OLLAMA_MODEL_INTEGRATOR=qwen3.5:9b`
-- `OLLAMA_MODEL_QUALITY=qwen3.5:9b`
-- `OLLAMA_MODEL_EMBEDDING=nomic-embed-text-v2-moe`
-- `RAG_ENABLED=true`
-- `RAG_TOP_K=4`
-- `RAG_CHROMA_DIR=.data/rag_chroma`
-- `RAG_COLLECTION_NAME=story_memory_slices`
-
-## Run CLI Pipeline / 命令行运行
-
-Non-stream mode:
-
-```bash
-python -m app.main --story-id future_academy_city --topic "campus anomaly at night" --style cinematic --roles "Reshaely,VanlyShan,SolinXuan"
-```
-
-Stream mode:
-
-```bash
-python -m app.main --stream --story-id future_academy_city --topic "campus anomaly at night" --style cinematic --roles "Reshaely,VanlyShan,SolinXuan"
-```
-
-## Run UI / 启动 UI
-
-```bash
-python UI/flet_app.py
-```
-
-In UI, you can:
-
-- Load/edit story frameworks
-- Load/edit role profiles and memory slices
-- Generate stories in single-role or multi-role mode
-- Configure RAG settings and model endpoints from settings page
-
-在 UI 中可进行：
-
-- 故事框架加载与编辑
-- 角色设定/记忆切片加载与编辑
-- 单角色与多角色故事生成
-- 在设置页控制 RAG 参数与模型配置
-
-## RAG CLI / RAG 命令
-
-Build vector index from memory slices:
-
-```bash
-python tools/embedding_cli.py index --roles "Reshaely,VanlyShan,SolinXuan"
-```
-
-Query RAG context:
-
-```bash
-python tools/embedding_cli.py query --story-id future_academy_city --target-role Reshaely --roles "Reshaely,VanlyShan,SolinXuan" --query "chapter timeline" --top-k 4
-```
-
-## Memory Slice Format / 记忆切片格式
-
-Generated role slices are persisted as:
-
-`memory/<role_id>/<story_id>__chapter_<timestamp>_run<run_id>.md`
-
-Each slice header includes:
-
-- Story ID
-- Role ID
-- Chapter Timestamp
-- Run ID
-- Topic
-- Style
-
-## Documentation / 文档索引
-
-- `docs/flow.md` (pipeline flow / 流程说明)
-- `docs/api.md` (module APIs / 接口说明)
-- `RAG/README.md` (RAG usage / RAG 使用说明)
-- `UI/README.md` (UI notes / UI 说明)
-- `stories/README.md` (story framework workspace / 框架说明)
-
-## License / 许可证
-
-Licensed under the Apache License 2.0.
-
-本项目采用 Apache License 2.0，详见 `LICENSE`。
+Apache License 2.0

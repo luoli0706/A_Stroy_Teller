@@ -2,7 +2,7 @@ import flet as ft
 from typing import Callable, Coroutine, Any
 
 class StoryControlPanel(ft.Column):
-    """故事输入与控制面板。"""
+    """故事输入与控制面板 (v0.2.4 持久化增强版)。"""
     def __init__(
         self, 
         on_run_click: Callable[..., Coroutine[Any, Any, None]],
@@ -12,7 +12,13 @@ class StoryControlPanel(ft.Column):
         self.on_run_click = on_run_click
         self.tr = tr
 
-        # 默认故事 ID 修改为 urban_detective 或其他有效值
+        # 新增 Thread ID 字段用于断点续写
+        self.thread_id_input = ft.TextField(
+            label="会话 ID (Thread ID)", 
+            value="session_001", 
+            width=200,
+            hint_text="使用相同 ID 可恢复中断的进度"
+        )
         self.story_id_input = ft.TextField(label="故事 ID (Story ID)", value="urban_detective", width=200)
         self.topic_input = ft.TextField(label="主题 (Topic)", value="一场午夜的图书馆探险", expand=True)
         self.style_input = ft.TextField(label="风格 (Style)", value="悬疑", width=200)
@@ -30,7 +36,7 @@ class StoryControlPanel(ft.Column):
     def build(self):
         return ft.Column([
             ft.Text("故事生成控制", size=20, weight="bold"),
-            ft.Row([self.story_id_input, self.style_input]),
+            ft.Row([self.thread_id_input, self.story_id_input, self.style_input]),
             self.topic_input,
             self.roles_input,
             ft.Row([self.run_button, self.progress_ring, self.status_text])
@@ -48,6 +54,7 @@ class StoryControlPanel(ft.Column):
 
     def get_values(self):
         return {
+            "thread_id": self.thread_id_input.value,
             "story_id": self.story_id_input.value,
             "topic": self.topic_input.value,
             "style": self.style_input.value,

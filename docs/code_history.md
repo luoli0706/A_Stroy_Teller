@@ -1,5 +1,16 @@
 # 代码更新历史 (Code History)
 
+## [v0.1.0-alpha.2.4] - 2026-04-02
+### 持久化与断点续写 (Persistence)
+- **接入 SqliteSaver**：利用 LangGraph 内置的 Checkpointer 机制，将图的每一个节点状态持久化到 SQLite 中。
+- **Thread ID 机制**：重构 `runtime.py` 以支持会话标识符，允许系统根据 ID 恢复未完成的创作任务。
+- **数据库连接池优化**：彻底重构 `app/sqlite_store.py`，使用显式的 `try...finally: conn.close()` 结构，消除了高并发下的资源泄露风险。
+
+### UI 层交互增强
+- **会话管理支持**：UI 增加 Thread ID 输入项，并在日志中实时反馈节点快照的保存状态。
+
+---
+
 ## [v0.1.0-alpha.2.3] - 2026-04-02
 ### 系统健壮性与工程化 (Hardening)
 - **集成测试构建**：新增 `tests/test_v023_ice_wind.py` 完整覆盖多角色入驻“冰与风之行”的全流程逻辑。
