@@ -1,5 +1,16 @@
 # 代码更新历史 (Code History)
 
+## [v0.1.0-alpha.2.5] - 2026-04-02
+### 持久化可视化 (Persistence Visualization)
+- **状态历史 API**：在 `runtime.py` 中新增 `get_thread_history_async`，利用 LangGraph 接口回溯持久化的 `StoryState` 快照。
+- **UI 组件化增强**：新增 `HistoryPanel` 组件，支持异步加载并渲染 Checkpoint 列表。
+- **Markdown 集成**：预览区域引入 `ft.Markdown` 组件，支持渲染带有层级标题、加粗和列表的故事正文。
+
+### UI 布局重构
+- **三栏式交互设计**：重新设计了主界面，分为“控制与日志”、“历史快照”和“Markdown 预览”三个功能区，大幅提升了操作流的清晰度。
+
+---
+
 ## [v0.1.0-alpha.2.4] - 2026-04-02
 ### 持久化与断点续写 (Persistence)
 - **接入 SqliteSaver**：利用 LangGraph 内置的 Checkpointer 机制，将图的每一个节点状态持久化到 SQLite 中。

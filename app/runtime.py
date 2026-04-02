@@ -49,7 +49,6 @@ def _sanitize_for_json(value: Any) -> Any:
 
 
 async def run_story_async(state: StoryState, thread_id: str = "default_thread") -> Dict[str, Any]:
-    """支持持久化恢复的同步运行方法。"""
     graph = build_graph()
     config = {"configurable": {"thread_id": thread_id}}
     result = await graph.ainvoke(state.model_dump(), config=config)
@@ -57,12 +56,10 @@ async def run_story_async(state: StoryState, thread_id: str = "default_thread") 
 
 
 async def stream_story_events_async(state: StoryState, thread_id: str = "default_thread") -> AsyncIterator[dict]:
-    """[v0.2.4] 支持 Thread ID 的异步流式产生。"""
     graph = build_graph()
     config = {"configurable": {"thread_id": thread_id}}
     
     try:
-        # 传入 config 以启用持久化
         async for update in graph.astream(state.model_dump(), config=config, stream_mode="updates"):
             for node_name, node_update in update.items():
                 yield {
@@ -73,3 +70,27 @@ async def stream_story_events_async(state: StoryState, thread_id: str = "default
         yield {"event": "done"}
     except Exception as exc:
         yield {"event": "error", "message": str(exc)}
+
+
+async def get_thread_history_async(thread_id: str) -> List[Dict[str, Any]]:
+    """[v0.2.5] 获取指定线程的持久化历史快照。"""
+    graph = build_graph()
+    config = {"configurable": {"thread_id": thread_id}}
+    
+    history = []
+    # get_state_history 返回一个迭代器，列出所有历史状态
+    # 注意：根据 LangGraph 版本不同，此方法可能是同步或异步，
+    # 这里我们使用通用的同步迭代器包装（如果是同步的）。
+    try:
+        for state in graph.get_state_history(config):
+            history.append({
+                "values": _sanitize_for_json(state.values),
+                "next": state.next,
+                "created_at": state.created_at if hasattr(state, "created_at") else None,
+                "metadata": state.metadata,
+                "config": state.config
+            })
+    except Exception as e:
+        print(f"Error fetching history: {e}")
+        
+    return history
