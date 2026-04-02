@@ -1,0 +1,26 @@
+# A Story Teller UI Strings
+
+zh:
+  app_title: "A Story Teller - Alpha 0.1"
+  app_subtitle: "角色中心的多视角故事生成系统 (高性能异步版)"
+  nav_story: "故事"
+  nav_role: "角色"
+  nav_settings: "设置"
+  status_idle: "空闲"
+  status_running: "生成中 (并行加速)..."
+  status_completed: "生成完成"
+  status_failed: "生成失败: {error}"
+  run_story: "开始生成"
+  # ... (其他键值对将在实现时引用)
+
+en:
+  app_title: "A Story Teller - Alpha 0.1"
+  app_subtitle: "Role-centric Multi-perspective Story System (Async High Performance)"
+  nav_story: "Story"
+  nav_role: "Roles"
+  nav_settings: "Settings"
+  status_idle: "Idle"
+  status_running: "Running (Parallel Optimized)..."
+  status_completed: "Completed"
+  status_failed: "Failed: {error}"
+  run_story: "Run Generation"

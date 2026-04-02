@@ -1,150 +1,45 @@
+import shutil
 from pathlib import Path
+from app.config import ROLE_DIR, MEMORY_DIR
 
-from app.state import RoleAsset
+def discover_roles(role_dir: str = str(ROLE_DIR)) -> list[str]:
+    """发现所有可用的角色。"""
+    root = Path(role_dir)
+    if not root.exists():
+        return []
+    return sorted([d.name for d in root.iterdir() if d.is_dir()])
 
-
-DEFAULT_ROLE_DIR = Path("role")
-DEFAULT_MEMORY_DIR = Path("memory")
-
-
-def _read_text_if_exists(path: Path) -> str:
-    if not path.exists():
-        return ""
-    return path.read_text(encoding="utf-8").strip()
-
-
-def _normalize_story_id(story_id: str) -> str:
-    value = story_id.strip()
-    if not value:
-        return "default"
-    return value.replace(" ", "_")
-
-
-def add_role_profile(
-    role_id: str,
-    profile_text: str,
-    role_dir: str | Path = DEFAULT_ROLE_DIR,
-) -> Path:
-    role_path = Path(role_dir) / role_id
-    role_path.mkdir(parents=True, exist_ok=True)
-    profile_path = role_path / "profile.md"
-    profile_path.write_text(profile_text.strip() + "\n", encoding="utf-8")
-    return profile_path
-
-
-def delete_role_profile(
-    role_id: str,
-    role_dir: str | Path = DEFAULT_ROLE_DIR,
-) -> bool:
-    role_path = Path(role_dir) / role_id
-    profile_path = role_path / "profile.md"
-    if not profile_path.exists():
-        return False
-
-    profile_path.unlink()
-    if role_path.exists() and not any(role_path.iterdir()):
-        role_path.rmdir()
-    return True
-
-
-def add_role_memory_slice(
-    role_id: str,
-    story_id: str,
-    memory_text: str,
-    memory_dir: str | Path = DEFAULT_MEMORY_DIR,
-) -> Path:
-    role_memory_path = Path(memory_dir) / role_id
-    role_memory_path.mkdir(parents=True, exist_ok=True)
-    memory_path = role_memory_path / f"{_normalize_story_id(story_id)}.md"
-    memory_path.write_text(memory_text.strip() + "\n", encoding="utf-8")
-    return memory_path
-
-
-def delete_role_memory_slice(
-    role_id: str,
-    story_id: str,
-    memory_dir: str | Path = DEFAULT_MEMORY_DIR,
-) -> bool:
-    memory_path = Path(memory_dir) / role_id / f"{_normalize_story_id(story_id)}.md"
-    if not memory_path.exists():
-        return False
-
-    memory_path.unlink()
-    parent_dir = memory_path.parent
-    if parent_dir.exists() and not any(parent_dir.iterdir()):
-        parent_dir.rmdir()
-    return True
-
-
-def delete_all_role_memories(
-    role_id: str,
-    memory_dir: str | Path = DEFAULT_MEMORY_DIR,
-    role_dir: str | Path = DEFAULT_ROLE_DIR,
-) -> int:
-    role_memory_path = Path(memory_dir) / role_id
-    deleted = 0
-
-    if role_memory_path.exists():
-        for memory_file in role_memory_path.glob("*.md"):
-            memory_file.unlink()
-            deleted += 1
-
-        if role_memory_path.exists() and not any(role_memory_path.iterdir()):
-            role_memory_path.rmdir()
-
-    # Backward compatibility: remove legacy role/<id>/memory.md.
-    legacy_memory_path = Path(role_dir) / role_id / "memory.md"
-    if legacy_memory_path.exists():
-        legacy_memory_path.unlink()
-        deleted += 1
-
-    role_path = Path(role_dir) / role_id
-    if role_path.exists() and not any(role_path.iterdir()):
-        role_path.rmdir()
-
-    return deleted
-
-
-def _load_role_memory(role_id: str, memory_dir: Path) -> str:
-    role_memory_path = memory_dir / role_id
-    if not role_memory_path.exists():
-        return ""
-
-    slices: list[str] = []
-    for memory_file in sorted(role_memory_path.glob("*.md")):
-        content = _read_text_if_exists(memory_file)
-        if content:
-            slices.append(f"# Slice: {memory_file.stem}\n{content}")
-
-    return "\n\n".join(slices).strip()
-
-
-def load_role_assets(
-    base_dir: str | Path,
-    roles: list[str],
-    memory_dir: str | Path = DEFAULT_MEMORY_DIR,
-) -> dict[str, RoleAsset]:
-    role_root = Path(base_dir)
-    memory_root = Path(memory_dir)
-    assets: dict[str, RoleAsset] = {}
-
-    for role_id in roles:
-        role_dir = role_root / role_id
-        assets[role_id] = {
-            "profile": _read_text_if_exists(role_dir / "profile.md"),
-            "memory": _load_role_memory(role_id, memory_root),
-        }
-
+def load_role_assets(role_dir: str, roles: list[str], memory_dir: str) -> dict[str, dict]:
+    """加载指定角色的设定与（预览版）记忆。"""
+    assets = {}
+    for rid in roles:
+        profile_path = Path(role_dir) / rid / "profile.md"
+        # 尝试从角色目录或记忆根目录查找记忆汇总文件
+        memory_path = Path(memory_dir) / rid / f"{rid}_summary.md" # 这里使用 Alpha 0.1 定义的汇总
+        
+        profile_text = profile_path.read_text(encoding="utf-8") if profile_path.exists() else ""
+        memory_text = memory_path.read_text(encoding="utf-8") if memory_path.exists() else ""
+        
+        assets[rid] = {"profile": profile_text, "memory": memory_text}
     return assets
 
+def add_role_profile(role_id: str, content: str) -> str:
+    path = ROLE_DIR / role_id
+    path.mkdir(parents=True, exist_ok=True)
+    f = path / "profile.md"
+    f.write_text(content, encoding="utf-8")
+    return str(f)
 
-def discover_roles(base_dir: str | Path) -> list[str]:
-    role_root = Path(base_dir)
-    if not role_root.exists():
-        return []
+def delete_role_profile(role_id: str) -> bool:
+    path = ROLE_DIR / role_id
+    if path.exists():
+        shutil.rmtree(path)
+        return True
+    return False
 
-    return sorted(
-        child.name
-        for child in role_root.iterdir()
-        if child.is_dir() and (child / "profile.md").exists()
-    )
+def add_role_memory_slice(role_id: str, story_id: str, content: str) -> str:
+    path = MEMORY_DIR / role_id
+    path.mkdir(parents=True, exist_ok=True)
+    f = path / f"{story_id}.md"
+    f.write_text(content, encoding="utf-8")
+    return str(f)

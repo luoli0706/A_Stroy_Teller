@@ -1,6 +1,5 @@
-from collections.abc import Iterator
-from queue import Empty, Queue
-import threading
+from collections.abc import AsyncIterator
+import asyncio
 from typing import Any
 
 from app.graph import build_graph
@@ -49,57 +48,34 @@ def _sanitize_for_json(value: Any) -> Any:
         }
     if isinstance(value, list):
         return [_sanitize_for_json(item) for item in value]
-    if isinstance(value, tuple):
-        return [_sanitize_for_json(item) for item in value]
     return str(value)
 
 
-def run_story(state: StoryState) -> StoryState:
+async def run_story_async(state: StoryState) -> StoryState:
     graph = build_graph()
-    result = graph.invoke(state)
+    result = await graph.ainvoke(state)
     return {
         **result,
         "log_file_path": state.get("log_file_path", result.get("log_file_path", "")),
     }
 
 
-def stream_story_events(state: StoryState) -> Iterator[dict[str, Any]]:
-    queue: Queue[dict[str, Any]] = Queue()
+async def stream_story_events_async(state: StoryState) -> AsyncIterator[dict[str, Any]]:
+    """异步流式产生事件。"""
     graph = build_graph()
-
-    def event_callback(event: dict[str, Any]) -> None:
-        queue.put(event)
-
-    runtime_state = {**state, "event_callback": event_callback}
-
-    def worker() -> None:
-        try:
-            for update in graph.stream(runtime_state, stream_mode="updates"):
-                for node_name, node_update in update.items():
-                    keys = sorted(node_update.keys())
-                    queue.put(
-                        {
-                            "event": "node_update",
-                            "node": node_name,
-                            "keys": keys,
-                            "data": _sanitize_for_json(node_update),
-                        }
-                    )
-            queue.put({"event": "done"})
-        except Exception as exc:
-            queue.put({"event": "error", "message": str(exc)})
-        finally:
-            queue.put({"event": "_end"})
-
-    thread = threading.Thread(target=worker, daemon=True)
-    thread.start()
-
-    while True:
-        try:
-            event = queue.get(timeout=0.2)
-        except Empty:
-            continue
-
-        if event.get("event") == "_end":
-            break
-        yield event
+    
+    # 注入异步回调
+    # 注意：LangGraph 的 stream_mode="updates" 会返回节点的增量更新
+    try:
+        async for update in graph.astream(state, stream_mode="updates"):
+            for node_name, node_update in update.items():
+                keys = sorted(node_update.keys())
+                yield {
+                    "event": "node_update",
+                    "node": node_name,
+                    "keys": keys,
+                    "data": _sanitize_for_json(node_update),
+                }
+        yield {"event": "done"}
+    except Exception as exc:
+        yield {"event": "error", "message": str(exc)}
