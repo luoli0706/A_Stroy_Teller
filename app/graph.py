@@ -95,8 +95,29 @@ async def plan_global_story(state: StoryState) -> StoryState:
 async def wait_for_user_outline(state: StoryState) -> StoryState:
     """[Alpha 0.2] HITL 中断点：等待用户确认/编辑大纲。"""
     _emit_event(state, {"event": "node_log", "node": "wait_for_user_outline", "message": "Outline ready. Waiting for user confirmation..."})
-    # 在实际运行中，LangGraph 的 interrupt(outline) 会在此挂起
     return state
+
+
+async def adapt_roles_to_framework(state: StoryState) -> StoryState:
+    """[v0.2.2] 并行生成每个演员在当前故事中的特定设定。"""
+    client = get_story_client()
+    roles = state.get("roles", [])
+    role_assets = state.get("role_assets", {})
+    framework = state.get("story_framework", "")
+    outline = state.get("global_outline", "")
+    
+    tasks = []
+    for rid in roles:
+        profile = role_assets.get(rid, {}).get("profile", "")
+        tasks.append(client.adapt_role_to_framework_async(
+            role_id=rid, generic_profile=profile, framework=framework, outline=outline,
+            token_callback=state.get("event_callback")
+        ))
+    
+    results = await asyncio.gather(*tasks)
+    identities = dict(zip(roles, results))
+    _emit_event(state, {"event": "node_log", "node": "adapt_roles", "message": f"Adapted {len(roles)} actors to story slots."})
+    return {**state, "role_story_identities": identities}
 
 
 async def retrieve_role_rag_contexts(state: StoryState) -> StoryState:
@@ -115,11 +136,15 @@ async def generate_role_views(state: StoryState) -> StoryState:
     roles = state.get("roles", [])
     role_assets = state.get("role_assets", {})
     rag_contexts = state.get("rag_role_contexts", {})
+    story_identities = state.get("role_story_identities", {})
+    
     tasks = []
     for rid in roles:
         asset = role_assets.get(rid, {"profile": "", "memory": ""})
         tasks.append(client.generate_role_view_async(
-            role_id=rid, profile=asset["profile"], memory=asset["memory"],
+            role_id=rid, generic_profile=asset["profile"], 
+            story_identity=story_identities.get(rid, "{}"),
+            memory=asset["memory"],
             rag_context=rag_contexts.get(rid, ""), outline=state["global_outline"],
             style=state["style"], token_callback=state.get("event_callback"),
         ))
@@ -139,7 +164,6 @@ async def integrate_perspectives(state: StoryState) -> StoryState:
 
 
 async def quality_check(state: StoryState) -> StoryState:
-    """[Alpha 0.2] 结构化质检。"""
     client = get_story_client()
     report_raw = await client.quality_check_async(
         outline=state.get("global_outline", ""),
@@ -193,8 +217,6 @@ async def finalize_output(state: StoryState) -> StoryState:
 
 
 async def distill_memories(state: StoryState) -> StoryState:
-    """[Alpha 0.2] 记忆蒸馏节点：自动汇总本次生成的角色切片到长期记忆汇总。"""
-    # 逻辑简化：仅将本次生成内容追加到汇总，Alpha 0.3 将引入 LLM 总结
     for rid, content in state.get("role_view_drafts", {}).items():
         summary_path = MEMORY_DIR / rid / f"{rid}_summary.md"
         summary_path.parent.mkdir(parents=True, exist_ok=True)
@@ -212,6 +234,7 @@ def build_graph():
         ("index_role_memories_for_rag", index_role_memories_for_rag),
         ("plan_global_story", plan_global_story),
         ("wait_for_user_outline", wait_for_user_outline),
+        ("adapt_roles_to_framework", adapt_roles_to_framework),
         ("retrieve_role_rag_contexts", retrieve_role_rag_contexts),
         ("generate_role_views", generate_role_views),
         ("integrate_perspectives", integrate_perspectives),
@@ -228,7 +251,8 @@ def build_graph():
     graph.add_edge("load_roles", "index_role_memories_for_rag")
     graph.add_edge("index_role_memories_for_rag", "plan_global_story")
     graph.add_edge("plan_global_story", "wait_for_user_outline")
-    graph.add_edge("wait_for_user_outline", "retrieve_role_rag_contexts")
+    graph.add_edge("wait_for_user_outline", "adapt_roles_to_framework")
+    graph.add_edge("adapt_roles_to_framework", "retrieve_role_rag_contexts")
     graph.add_edge("retrieve_role_rag_contexts", "generate_role_views")
     graph.add_edge("generate_role_views", "integrate_perspectives")
     graph.add_edge("integrate_perspectives", "quality_check")

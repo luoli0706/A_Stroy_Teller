@@ -23,37 +23,39 @@ from UI.components.story_panel import StoryControlPanel
 # --- I18N ---
 STRINGS = {
     "zh": {
-        "app_title": "A Story Teller - Alpha 0.2",
-        "status_idle": "空闲",
-        "status_running": "正在生成 (并行加速)...",
-        "status_done": "生成成功",
-        "btn_run": "并行生成故事",
+        "app_title": "A Story Teller - v0.2.2 (Roleplay Update)",
+        "status_idle": "等待开始...",
+        "status_running": "流程执行中 (含角色适配与并行生成)...",
+        "status_done": "故事生成成功",
+        "btn_run": "开始角色扮演并生成故事",
     },
     "en": {
-        "app_title": "A Story Teller - Alpha 0.2",
+        "app_title": "A Story Teller - v0.2.2 (Roleplay Update)",
         "status_idle": "Idle",
-        "status_running": "Generating (Parallel Optimized)...",
-        "status_done": "Done",
-        "btn_run": "Parallel Generate",
+        "status_running": "Executing Flow (Role Adaptation & Parallel Gen)...",
+        "status_done": "Story Generation Successful",
+        "btn_run": "Start Roleplay & Generate",
     }
 }
 
 async def main(page: ft.Page):
     page.title = STRINGS[DEFAULT_LANG]["app_title"]
     page.theme_mode = ft.ThemeMode.LIGHT
+    page.padding = 20
     
     lang = DEFAULT_LANG
     def tr(key): return STRINGS[lang].get(key, key)
 
     # --- 初始化组件 ---
-    log_viewer = LogViewer(hint_text="暂无日志。点击生成后将实时显示节点状态。")
+    log_viewer = LogViewer(hint_text="点击生成后将显示详细的节点执行日志。")
     output_display = ft.TextField(
-        label="最终故事 (Final Story)", 
+        label="最终成文与角色设定 (Story & Identities)", 
         multiline=True, 
-        min_lines=15, 
+        min_lines=20, 
         read_only=True, 
         expand=True,
-        bgcolor="#fdfdfd"
+        bgcolor="#fdfdfd",
+        text_size=14
     )
 
     async def on_run_click(e):
@@ -66,12 +68,14 @@ async def main(page: ft.Page):
         page.update()
 
         state = build_input_state(
-            story_id="alpha_02_test",
+            story_id=values["story_id"],
             topic=values["topic"],
             style=values["style"],
             roles=values["roles"],
             max_retry=1
         )
+
+        final_story_identities = ""
 
         try:
             async for event in stream_story_events_async(state):
@@ -81,10 +85,26 @@ async def main(page: ft.Page):
                     page.update()
                 elif etype == "node_update":
                     node = event.get("node")
-                    log_viewer.add_log(f"✅ Node Finished: {node}", color="green")
+                    data = event.get("data", {})
+                    log_viewer.add_log(f"✅ 完成节点: {node}", color="green")
+                    
+                    # 特殊处理：角色适配完成后展示生成的身份
+                    if node == "adapt_roles_to_framework":
+                        identities = data.get("role_story_identities", {})
+                        id_text = "\n--- 角色扮演分配 ---\n"
+                        for rid, info in identities.items():
+                            try:
+                                info_dict = json.loads(info)
+                                id_text += f"演员 [{rid}] 扮演: {info_dict.get('story_name')} | 目标: {info_dict.get('story_specific_goal')}\n"
+                            except:
+                                id_text += f"演员 [{rid}] 身份已分配\n"
+                        final_story_identities = id_text
+                        log_viewer.add_log("🎭 角色槽位分配完成", color="blue")
                 elif etype == "error":
-                    log_viewer.add_log(f"❌ Error: {event.get('message')}", color="red")
+                    log_viewer.add_log(f"❌ 错误: {event.get('message')}", color="red")
             
+            # 在顶部插入身份信息
+            output_display.value = final_story_identities + "\n--- 正文 ---\n" + output_display.value
             story_panel.set_status(tr("status_done"), color="green")
         except Exception as ex:
             story_panel.set_status(f"Error: {str(ex)}", color="red")
@@ -94,22 +114,26 @@ async def main(page: ft.Page):
 
     story_panel = StoryControlPanel(on_run_click=on_run_click, tr=tr)
 
-    # --- 布局结构 ---
+    # --- 页面布局 ---
     page.add(
         ft.AppBar(
-            title=ft.Text(tr("app_title"), weight="bold"), 
-            bgcolor=ft.colors.SURFACE_VARIANT,
-            center_title=True
+            title=ft.Text(tr("app_title"), weight="bold", color="white"), 
+            bgcolor=ft.colors.INDIGO_700,
+            center_title=False
         ),
-        ft.Column([
-            story_panel.build(),
-            ft.Divider(),
-            ft.Text("实时状态日志 (Log Viewer)", size=16, weight="w600"),
-            log_viewer,
-            ft.Divider(),
-            ft.Text("输出结果 (Output Display)", size=16, weight="w600"),
-            output_display
-        ], expand=True, spacing=15, scroll=ft.ScrollMode.AUTO)
+        ft.Row([
+            ft.Column([
+                story_panel.build(),
+                ft.Divider(),
+                ft.Text("实时状态日志", size=16, weight="w600"),
+                log_viewer,
+            ], width=450, spacing=15),
+            ft.VerticalDivider(width=1),
+            ft.Column([
+                ft.Text("生成结果预览", size=16, weight="w600"),
+                output_display
+            ], expand=True, spacing=15)
+        ], expand=True)
     )
 
 if __name__ == "__main__":

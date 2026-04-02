@@ -1,5 +1,17 @@
 # 代码更新历史 (Code History)
 
+## [v0.1.0-alpha.2.2] - 2026-04-02
+### 角色扮演架构 (Roleplay Engine)
+- **动态身份适配**：在 LLM 客户端中新增 `adapt_role_to_framework_async`，支持根据通用性格生成故事相关的特定身份（JSON 模式）。
+- **槽位系统实现**：重构故事框架结构，引入 `Role Slots` 定义。在 `plan_global_story` 中初步实现演员到槽位的映射。
+- **状态机扩展**：更新 `StoryState` 以支持 `role_story_identities` 字段，确保身份信息在并行生成节点间正确流转。
+
+### UI 深度重构 (UI Refactoring)
+- **左右分栏布局**：将 UI 调整为响应式分栏结构，左侧统筹输入与实时日志，右侧专注结果呈现。
+- **组件化同步**：进一步完善 `StoryControlPanel` 与主应用的异步状态同步。
+
+---
+
 ## [v0.1.0-alpha.2.1] - 2026-04-02
 ### 数据模型变更 (Data Model)
 - **通用角色设定 (Generic Profiles)**：重构了 `role/` 下的角色设定结构，剥离了特定故事背景。引入了“基础形象”、“性格特质”、“语言风格”等通用字段。

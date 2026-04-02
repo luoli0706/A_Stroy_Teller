@@ -99,7 +99,7 @@ class OllamaStoryClient:
             model=model,
             base_url=self.base_url,
             temperature=self.temperature if temperature is None else temperature,
-            format=response_format # 支持 JSON 模式
+            format=response_format
         )
 
         if token_callback:
@@ -133,9 +133,11 @@ class OllamaStoryClient:
     ) -> str:
         prompt = (
             "You are a story planner. Build a concise 3-act outline with timeline beats. "
-            f"Topic: {topic}\nStyle: {style}\nRoles: {', '.join(role_ids)}\n\n"
-            f"Story framework:\n{framework}\n\n"
-            "Output format:\n- Act 1\n- Act 2\n- Act 3\n- Shared facts (bullet list)"
+            f"Topic: {topic}\nStyle: {style}\nActors (Real Names): {', '.join(role_ids)}\n\n"
+            f"Story framework & Role Slots:\n{framework}\n\n"
+            "INSTRUCTION: Map each Actor to a Slot. If more Actors than Slots, create new roles. "
+            "Use Actors' real names in the outline.\n\n"
+            "Output format:\n- Role Mapping: [Actor Name] -> [Slot Name]\n- Act 1\n- Act 2\n- Act 3\n- Shared facts"
         )
         return await self._chat_async(
             self.model_planner, prompt, temperature=0.5,
@@ -143,10 +145,42 @@ class OllamaStoryClient:
             event_meta={"node": "plan_global_story"}
         )
 
+    async def adapt_role_to_framework_async(
+        self,
+        role_id: str,
+        generic_profile: str,
+        framework: str,
+        outline: str,
+        token_callback: Callable[[dict], None] | None = None,
+    ) -> str:
+        """[v0.2.2] 让演员根据通用设定和故事大纲，生成在本故事中的特定身份。"""
+        prompt = (
+            "You are an actor preparing for a role in a story.\n"
+            f"Your Real Identity (Generic Profile):\n{generic_profile}\n\n"
+            f"Story Framework:\n{framework}\n\n"
+            f"Global Outline:\n{outline}\n\n"
+            "TASK: Based on your personality and the story needs, generate your 'Temporary Story Identity'.\n"
+            "Decide your specific job/role in this story and how your traits manifest here.\n"
+            "Output Format (JSON):\n"
+            "{\n"
+            "  'story_name': '...', \n"
+            "  'story_personality_manifestation': '...', \n"
+            "  'story_specific_goal': '...', \n"
+            "  'story_key_items': ['...']\n"
+            "}"
+        )
+        return await self._chat_async(
+            self.model_role, prompt, temperature=0.7,
+            token_callback=token_callback,
+            event_meta={"node": "adapt_roles_to_framework", "role_id": role_id},
+            response_format="json"
+        )
+
     async def generate_role_view_async(
         self,
         role_id: str,
-        profile: str,
+        generic_profile: str,
+        story_identity: str,
         memory: str,
         rag_context: str,
         outline: str,
@@ -155,8 +189,10 @@ class OllamaStoryClient:
     ) -> str:
         prompt = (
             "You are writing one role-specific narrative in first person. "
-            f"Role ID: {role_id}\nStyle: {style}\nGlobal outline:\n{outline}\n\n"
-            f"Role profile:\n{profile}\nRole memory:\n{memory}\n"
+            f"Real Identity:\n{generic_profile}\n"
+            f"Story-Specific Identity:\n{story_identity}\n\n"
+            f"Style: {style}\nGlobal outline:\n{outline}\n\n"
+            f"Past Memories:\n{memory}\n"
             f"RAG context:\n{rag_context or '(none)'}\n\n"
             "Output: Perspective Summary, Scene Narrative, Role-specific interpretation"
         )
@@ -192,7 +228,6 @@ class OllamaStoryClient:
         role_ids: list[str],
         token_callback: Callable[[dict], None] | None = None,
     ) -> str:
-        """[Alpha 0.2] 结构化质检，返回 JSON。"""
         prompt = (
             "Evaluate story consistency. Return ONLY a JSON object with fields: "
             "'status' (PASS/FAIL), 'score' (0-10), 'conflicts' (list of strings), 'suggestions' (list).\n\n"
