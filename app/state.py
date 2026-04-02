@@ -1,45 +1,60 @@
-from typing import Annotated, Any, Callable, TypedDict
+from typing import Annotated, Any, Callable, Dict, List, Optional
+from pydantic import BaseModel, Field
 
+class RoleStoryIdentity(BaseModel):
+    """角色在特定故事中的身份设定。"""
+    story_name: str
+    story_personality_manifestation: str
+    story_specific_goal: str
+    story_key_items: List[str] = []
 
-def _merge_dict(left: dict, right: dict) -> dict:
-    return {**left, **right}
+class QualityReport(BaseModel):
+    """结构化质检报告。"""
+    status: str = "PASS" # PASS or FAIL
+    score: int = 0
+    conflicts: List[str] = []
+    suggestions: List[str] = []
 
-
-class StoryState(TypedDict):
-    """LangGraph 状态定义。"""
-
+class StoryState(BaseModel):
+    """[v0.2.3] 基于 Pydantic 的全局状态模型。"""
+    
     # --- 输入参数 ---
-    story_id: str
-    topic: str
-    style: str
-    roles: list[str]
-    max_retry: int
+    story_id: str = "urban_detective"
+    topic: str = ""
+    style: str = "suspense"
+    roles: List[str] = []
+    max_retry: int = 1
 
     # --- 流程中间变量 ---
-    retry_count: int
-    story_framework: str
-    role_assets: dict[str, dict]  # role_id -> {profile, memory}
-    global_outline: str
+    retry_count: int = 0
+    story_framework: str = ""
+    role_assets: Dict[str, Dict[str, str]] = {} # role_id -> {profile, memory}
+    global_outline: str = ""
     
-    # [v0.2.2] 角色在当前故事中的特定设定: role_id -> json_str
-    role_story_identities: dict[str, str]
+    # 角色映射与适配
+    role_mapping: Dict[str, str] = {} # Actor Name -> Slot Name
+    role_story_identities: Dict[str, RoleStoryIdentity] = {} # role_id -> Identity Model
+    relationship_matrix: str = "" # [v0.2.3] 角色关系网描述
 
     # --- RAG 相关 ---
-    rag_enabled: bool
-    rag_top_k: int
-    rag_indexed_docs: int
-    rag_role_contexts: dict[str, str]  # role_id -> context_text
+    rag_enabled: bool = True
+    rag_top_k: int = 4
+    rag_indexed_docs: int = 0
+    rag_role_contexts: Dict[str, str] = {} # role_id -> context_text
 
     # --- 生成产物 ---
-    role_view_drafts: dict[str, str]  # role_id -> text
-    integrated_draft: str
-    quality_report: str  # JSON 格式
-    final_story: str
-    run_id: int
-    memory_slice_paths: list[str]
+    role_view_drafts: Dict[str, str] = {} # role_id -> text
+    integrated_draft: str = ""
+    quality_report: Optional[QualityReport] = None
+    final_story: str = ""
+    run_id: Optional[int] = None
+    memory_slice_paths: List[str] = []
 
     # --- 系统/观测 ---
-    logger_name: str
-    log_file_path: str
-    # 允许在运行时注入回调，用于 UI 实时更新
-    event_callback: Annotated[Callable[[dict[str, Any]], None], "callback"]
+    logger_name: str = "story_teller"
+    log_file_path: str = ""
+    # 回调不参与模型序列化
+    event_callback: Optional[Callable[[Dict[str, Any]], None]] = Field(None, exclude=True)
+
+    class Config:
+        arbitrary_types_allowed = True

@@ -1,7 +1,7 @@
 import os
 import json
 import asyncio
-from typing import Callable, Any
+from typing import Callable, Any, List, Dict
 import httpx
 from langchain_ollama import ChatOllama
 from app.config import (
@@ -27,7 +27,6 @@ class OllamaStoryClient:
         self.temperature = DEFAULT_TEMPERATURE
 
     async def _list_available_models_async(self) -> list[str]:
-        """使用 httpx 异步获取 Ollama 可用模型列表。"""
         tags_url = self.base_url.rstrip("/") + "/api/tags"
         async with httpx.AsyncClient() as client:
             try:
@@ -48,36 +47,17 @@ class OllamaStoryClient:
         return aliases
 
     async def health_check_async(self) -> dict:
-        """异步执行健康检查。"""
-        required = {
-            self.model_planner,
-            self.model_role,
-            self.model_integrator,
-            self.model_quality,
-            self.model_embedding,
-        }
+        required = {self.model_planner, self.model_role, self.model_integrator, self.model_quality, self.model_embedding}
         available_models = await self._list_available_models_async()
         if not available_models:
-            return {
-                "ok": False,
-                "message": f"Ollama 服务无法连接: {self.base_url}",
-            }
-
+            return {"ok": False, "message": f"Ollama 服务无法连接: {self.base_url}"}
         available_set = set(available_models)
-        missing = [
-            m for m in required 
-            if not (self._model_aliases(m) & available_set)
-        ]
-        
+        missing = [m for m in required if not (self._model_aliases(m) & available_set)]
         if missing:
-            return {
-                "ok": False,
-                "message": f"缺失模型: {', '.join(missing)}. 请先执行 ollama pull。",
-            }
+            return {"ok": False, "message": f"缺失模型: {', '.join(missing)}. 请先执行 ollama pull。"}
         return {"ok": True, "message": "Ollama 健康检查通过。"}
 
     def assert_ready(self) -> None:
-        """同步检查状态，主要用于初始化（通过 asyncio.run）。"""
         try:
             res = asyncio.run(self.health_check_async())
             if not res["ok"]:
@@ -94,7 +74,6 @@ class OllamaStoryClient:
         event_meta: dict | None = None,
         response_format: str | None = None,
     ) -> str:
-        """核心异步聊天逻辑，支持流式 token 回调与 JSON 格式。"""
         llm = ChatOllama(
             model=model,
             base_url=self.base_url,
@@ -123,27 +102,53 @@ class OllamaStoryClient:
         content = getattr(response, "content", "")
         return str(content).strip() if not isinstance(content, list) else "\n".join(map(str, content)).strip()
 
+    async def map_roles_to_slots_async(self, roles: List[str], role_profiles: Dict[str, str], framework: str) -> str:
+        """[v0.2.3] 独立的角色分配节点。"""
+        profiles_summary = "\n".join([f"Actor [{rid}]: {profile[:200]}..." for rid, profile in role_profiles.items()])
+        prompt = (
+            "You are a casting director. Assign each Actor to a Role Slot from the framework.\n"
+            f"Actors:\n{profiles_summary}\n\n"
+            f"Story Framework:\n{framework}\n\n"
+            "Return a JSON object where keys are Actor IDs and values are Slot Names.\n"
+            "If an actor doesn't fit any slot, assign them as 'New Character: [Proposed Role Name]'."
+        )
+        return await self._chat_async(
+            self.model_planner, prompt, temperature=0.2,
+            event_meta={"node": "role_mapping"},
+            response_format="json"
+        )
+
     async def plan_global_story_async(
         self,
         topic: str,
         style: str,
-        role_ids: list[str],
+        role_mapping: Dict[str, str],
         framework: str,
         token_callback: Callable[[dict], None] | None = None,
     ) -> str:
+        mapping_str = "\n".join([f"{actor} plays {slot}" for actor, slot in role_mapping.items()])
         prompt = (
             "You are a story planner. Build a concise 3-act outline with timeline beats. "
-            f"Topic: {topic}\nStyle: {style}\nActors (Real Names): {', '.join(role_ids)}\n\n"
-            f"Story framework & Role Slots:\n{framework}\n\n"
-            "INSTRUCTION: Map each Actor to a Slot. If more Actors than Slots, create new roles. "
-            "Use Actors' real names in the outline.\n\n"
-            "Output format:\n- Role Mapping: [Actor Name] -> [Slot Name]\n- Act 1\n- Act 2\n- Act 3\n- Shared facts"
+            f"Topic: {topic}\nStyle: {style}\n\n"
+            f"Cast Assignment:\n{mapping_str}\n\n"
+            f"Story framework:\n{framework}\n\n"
+            "Output format:\n- Act 1\n- Act 2\n- Act 3\n- Shared facts"
         )
         return await self._chat_async(
             self.model_planner, prompt, temperature=0.5,
             token_callback=token_callback,
             event_meta={"node": "plan_global_story"}
         )
+
+    async def generate_relationships_async(self, role_ids: List[str], identities: Dict[str, str]) -> str:
+        """[v0.2.3] 生成初始社交关系网。"""
+        ids_summary = "\n".join([f"{rid}: {info}" for rid, info in identities.items()])
+        prompt = (
+            "Generate a social relationship matrix for these characters in the current story.\n"
+            f"Cast:\n{ids_summary}\n\n"
+            "Describe the initial attitude, conflict, or bond between each pair."
+        )
+        return await self._chat_async(self.model_planner, prompt, temperature=0.6)
 
     async def adapt_role_to_framework_async(
         self,
@@ -153,21 +158,13 @@ class OllamaStoryClient:
         outline: str,
         token_callback: Callable[[dict], None] | None = None,
     ) -> str:
-        """[v0.2.2] 让演员根据通用设定和故事大纲，生成在本故事中的特定身份。"""
         prompt = (
-            "You are an actor preparing for a role in a story.\n"
+            "You are an actor preparing for a role. CRITICAL: Your core personality must remain consistent.\n"
             f"Your Real Identity (Generic Profile):\n{generic_profile}\n\n"
             f"Story Framework:\n{framework}\n\n"
             f"Global Outline:\n{outline}\n\n"
-            "TASK: Based on your personality and the story needs, generate your 'Temporary Story Identity'.\n"
-            "Decide your specific job/role in this story and how your traits manifest here.\n"
-            "Output Format (JSON):\n"
-            "{\n"
-            "  'story_name': '...', \n"
-            "  'story_personality_manifestation': '...', \n"
-            "  'story_specific_goal': '...', \n"
-            "  'story_key_items': ['...']\n"
-            "}"
+            "TASK: Generate your 'Temporary Story Identity'. Ensure your traits manifest authentically in this new context.\n"
+            "Output Format (JSON): {'story_name', 'story_personality_manifestation', 'story_specific_goal', 'story_key_items'}"
         )
         return await self._chat_async(
             self.model_role, prompt, temperature=0.7,
@@ -181,6 +178,7 @@ class OllamaStoryClient:
         role_id: str,
         generic_profile: str,
         story_identity: str,
+        relationships: str,
         memory: str,
         rag_context: str,
         outline: str,
@@ -189,8 +187,9 @@ class OllamaStoryClient:
     ) -> str:
         prompt = (
             "You are writing one role-specific narrative in first person. "
-            f"Real Identity:\n{generic_profile}\n"
-            f"Story-Specific Identity:\n{story_identity}\n\n"
+            f"REAL IDENTITY (DO NOT BREAK CHARACTER):\n{generic_profile}\n"
+            f"STORY IDENTITY:\n{story_identity}\n"
+            f"RELATIONSHIPS:\n{relationships}\n\n"
             f"Style: {style}\nGlobal outline:\n{outline}\n\n"
             f"Past Memories:\n{memory}\n"
             f"RAG context:\n{rag_context or '(none)'}\n\n"
@@ -206,7 +205,7 @@ class OllamaStoryClient:
         self,
         topic: str,
         style: str,
-        role_drafts: dict[str, str],
+        role_drafts: Dict[str, str],
         token_callback: Callable[[dict], None] | None = None,
     ) -> str:
         draft_blocks = "\n\n".join(f"Role: {rid}\n{draft}" for rid, draft in role_drafts.items())
@@ -225,7 +224,7 @@ class OllamaStoryClient:
         self,
         outline: str,
         integrated_story: str,
-        role_ids: list[str],
+        role_ids: List[str],
         token_callback: Callable[[dict], None] | None = None,
     ) -> str:
         prompt = (

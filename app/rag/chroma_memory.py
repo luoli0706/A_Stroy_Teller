@@ -1,8 +1,10 @@
 import os
 import asyncio
+import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, List, Optional
 
 import chromadb
 from app.config import (
@@ -22,6 +24,11 @@ class MemoryDocument:
     story_id: str
     slice_id: str
     chapter_timestamp: str
+    content_hash: str # [v0.2.3] 引入哈希校验
+
+
+def _compute_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _normalize_story_id(story_id: str) -> str:
@@ -51,7 +58,6 @@ def load_memory_documents(roles: list[str]) -> list[MemoryDocument]:
             header = _parse_header(text)
             slice_id = file_path.stem
             
-            # 从文件名或 Header 中推断信息
             story_id = header.get("story id") or (slice_id.split("__")[0] if "__" in slice_id else "legacy")
             ts = header.get("chapter timestamp") or ("legacy")
 
@@ -61,7 +67,8 @@ def load_memory_documents(roles: list[str]) -> list[MemoryDocument]:
                 source_role=role_id,
                 story_id=_normalize_story_id(story_id),
                 slice_id=slice_id,
-                chapter_timestamp=ts
+                chapter_timestamp=ts,
+                content_hash=_compute_hash(text)
             ))
     return documents
 
@@ -73,24 +80,43 @@ def _get_collection():
 
 
 def index_memory_directory(roles: list[str]) -> int:
-    """全量/增量构建向量索引。"""
-    docs = load_memory_documents(roles)
-    if not docs:
+    """[v0.2.3] 增量构建向量索引。仅对 Hash 变更的文件进行 Upsert。"""
+    all_docs = load_memory_documents(roles)
+    if not all_docs:
+        return 0
+
+    collection = _get_collection()
+    
+    # 获取现有 Metadata 以便比对 Hash
+    try:
+        existing = collection.get(include=["metadatas"])
+        existing_hashes = {
+            meta.get("slice_id"): meta.get("content_hash") 
+            for meta in existing.get("metadatas", [])
+        }
+    except:
+        existing_hashes = {}
+
+    # 筛选真正需要更新的文档
+    to_update = [
+        d for d in all_docs 
+        if existing_hashes.get(d.slice_id) != d.content_hash
+    ]
+
+    if not to_update:
         return 0
 
     embedder = OllamaEmbeddingClient()
-    collection = _get_collection()
-
-    ids = [d.doc_id for d in docs]
-    texts = [d.text for d in docs]
+    ids = [d.doc_id for d in to_update]
+    texts = [d.text for d in to_update]
     metas = [{
         "source_role": d.source_role,
         "story_id": d.story_id,
         "slice_id": d.slice_id,
         "chapter_timestamp": d.chapter_timestamp,
-    } for d in docs]
+        "content_hash": d.content_hash, # 存储哈希
+    } for d in to_update]
     
-    # 批量嵌入 (同步调用，因为 OllamaEmbeddingClient 目前是同步的)
     embeddings = embedder.embed_texts(texts)
     
     collection.upsert(
@@ -99,7 +125,7 @@ def index_memory_directory(roles: list[str]) -> int:
         metadatas=metas,
         embeddings=embeddings
     )
-    return len(docs)
+    return len(to_update)
 
 
 async def format_role_rag_context_async(
@@ -109,23 +135,19 @@ async def format_role_rag_context_async(
     query_text: str,
     top_k: int | None = None,
 ) -> str:
-    """使用 ChromaDB 的原生 query 接口进行高效异步检索。"""
     collection = _get_collection()
     top_k = top_k or RAG_TOP_K
     story_key = _normalize_story_id(story_id)
     
-    # 获取查询向量
     embedder = OllamaEmbeddingClient()
-    # 目前嵌入客户端是同步的，但在异步节点中运行，后续可优化为异步
     query_embeddings = embedder.embed_texts([query_text])
     if not query_embeddings:
         return ""
 
-    # 使用原生 query 接口，按 story_id 过滤
     results = collection.query(
         query_embeddings=query_embeddings,
         n_results=top_k,
-        where={"story_id": story_key}, # 核心优化：利用元数据过滤
+        where={"story_id": story_key},
         include=["documents", "metadatas", "distances"]
     )
 
@@ -138,7 +160,6 @@ async def format_role_rag_context_async(
 
     parts = []
     for idx, (doc, meta, dist) in enumerate(zip(docs, metas, distances), 1):
-        # 距离转换为相似度分数 (Chroma 默认使用 L2 或余弦距离)
         score = 1.0 - dist if dist < 1.0 else 0.0
         parts.append(
             f"[RAG {idx}] score={score:.4f} source={meta.get('source_role')}\n"
@@ -160,7 +181,6 @@ def persist_generated_role_slice(
     style: str,
     content: str,
 ) -> Path:
-    """持久化生成的记忆切片。"""
     story_key = _normalize_story_id(story_id)
     dest_dir = MEMORY_DIR / role_id
     dest_dir.mkdir(parents=True, exist_ok=True)

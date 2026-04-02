@@ -1,5 +1,18 @@
 # 代码更新历史 (Code History)
 
+## [v0.1.0-alpha.2.3] - 2026-04-02
+### 系统健壮性与工程化 (Hardening)
+- **并发容错机制**：引入 `robust_task` 包装器，确保多角色并行生成时，个别角色的异常不会导致整图流程崩溃。
+- **全链路类型安全**：重构 `StoryState` 为基于 Pydantic 的模型，引入 `RoleStoryIdentity` 与 `QualityReport` 结构化子模型。
+- **增量 RAG 索引**：实现基于 SHA-256 内容哈希的增量索引机制，大幅优化了存在大量过往记忆时的“索引冷启动”耗时。
+
+### 角色逻辑深化 (Role Logic)
+- **独立映射节点**：将演员到槽位的映射逻辑从大纲节点剥离，建立独立的 `map_roles_to_slots` 节点。
+- **关系网引擎**：新增 `generate_relationships_async`，在故事开始前自动生成角色间的初始社交关系矩阵。
+- **性格保真度增强**：在所有视角生成 Prompt 中强化了对通用性格（Real Identity）的权重要求。
+
+---
+
 ## [v0.1.0-alpha.2.2] - 2026-04-02
 ### 角色扮演架构 (Roleplay Engine)
 - **动态身份适配**：在 LLM 客户端中新增 `adapt_role_to_framework_async`，支持根据通用性格生成故事相关的特定身份（JSON 模式）。

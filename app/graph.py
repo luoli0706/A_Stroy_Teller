@@ -2,8 +2,10 @@ import json
 import logging
 import os
 import asyncio
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Dict, Any, List
 
 from langgraph.graph import END, START, StateGraph
 
@@ -19,221 +21,188 @@ from app.rag.chroma_memory import (
 )
 from app.role_memory import discover_roles, load_role_assets
 from app.sqlite_store import init_db, insert_story_run, upsert_role_asset
-from app.state import StoryState
-from app.story_framework import DEFAULT_STORY_ID, load_story_framework
+from app.state import StoryState, RoleStoryIdentity, QualityReport
 
 
 def _get_logger(state: StoryState) -> logging.Logger:
-    return logging.getLogger(state.get("logger_name", "story_teller"))
+    return logging.getLogger(state.logger_name)
 
 
 def _emit_event(state: StoryState, event: dict) -> None:
-    callback = state.get("event_callback")
-    if callable(callback):
-        callback(event)
+    if state.event_callback:
+        state.event_callback(event)
 
 
-async def collect_requirements(state: StoryState) -> StoryState:
-    logger = _get_logger(state)
-    logger.info("node=collect_requirements status=start")
-    story_id = state.get("story_id", DEFAULT_STORY_ID)
-    roles = state.get("roles") or discover_roles(str(ROLE_DIR))
+async def robust_task(coro, role_id: str, node_name: str, state: StoryState):
+    """[v0.2.3] 并发容错包装器。"""
+    try:
+        return await coro
+    except Exception as e:
+        _get_logger(state).error(f"Error in {node_name} for {role_id}: {str(e)}")
+        _emit_event(state, {"event": "error", "node": node_name, "role_id": role_id, "message": str(e)})
+        return f"ERROR: Failed to execute {node_name}. {str(e)}"
+
+
+async def collect_requirements(state: StoryState) -> Dict[str, Any]:
     init_db(str(SQLITE_DB_PATH))
     get_story_client().assert_ready()
+    
+    # 填充默认值
+    roles = state.roles if state.roles else discover_roles(str(ROLE_DIR))
     return {
-        **state,
-        "story_id": story_id,
         "roles": roles,
-        "retry_count": state.get("retry_count", 0),
-        "max_retry": state.get("max_retry", MAX_RETRY),
-        "rag_enabled": state.get("rag_enabled", RAG_ENABLED),
-        "rag_top_k": state.get("rag_top_k", RAG_TOP_K),
+        "max_retry": state.max_retry or MAX_RETRY,
+        "rag_enabled": state.rag_enabled if state.rag_enabled is not None else RAG_ENABLED,
+        "rag_top_k": state.rag_top_k or RAG_TOP_K
     }
 
 
-async def load_story_framework_node(state: StoryState) -> StoryState:
-    story_id, framework = load_story_framework(
-        story_id=state.get("story_id", DEFAULT_STORY_ID),
-        stories_dir=str(STORIES_DIR),
-    )
-    return {**state, "story_id": story_id, "story_framework": framework}
+async def load_story_framework_node(state: StoryState) -> Dict[str, Any]:
+    from app.story_framework import load_story_framework
+    story_id, framework = load_story_framework(state.story_id, str(STORIES_DIR))
+    return {"story_id": story_id, "story_framework": framework}
 
 
-async def load_roles(state: StoryState) -> StoryState:
-    roles = state.get("roles", [])
-    assets = load_role_assets(str(ROLE_DIR), roles, memory_dir=str(MEMORY_DIR))
-    for role_id, role_asset in assets.items():
-        upsert_role_asset(
-            role_id=role_id,
-            profile=role_asset.get("profile", ""),
-            memory=role_asset.get("memory", ""),
-            db_path=str(SQLITE_DB_PATH),
-        )
-    return {**state, "role_assets": assets}
+async def load_roles(state: StoryState) -> Dict[str, Any]:
+    assets = load_role_assets(str(ROLE_DIR), state.roles, memory_dir=str(MEMORY_DIR))
+    for rid, asset in assets.items():
+        upsert_role_asset(rid, asset.get("profile", ""), asset.get("memory", ""), str(SQLITE_DB_PATH))
+    return {"role_assets": assets}
 
 
-async def index_role_memories_for_rag(state: StoryState) -> StoryState:
-    if not state.get("rag_enabled"):
-        return {**state, "rag_indexed_docs": 0}
-    indexed = index_memory_directory(roles=state.get("roles", []))
-    _emit_event(state, {"event": "node_log", "node": "index", "message": f"RAG Indexed: {indexed}"})
-    return {**state, "rag_indexed_docs": indexed}
+async def index_role_memories_for_rag(state: StoryState) -> Dict[str, Any]:
+    if not state.rag_enabled:
+        return {"rag_indexed_docs": 0}
+    indexed = index_memory_directory(roles=state.roles)
+    return {"rag_indexed_docs": indexed}
 
 
-async def plan_global_story(state: StoryState) -> StoryState:
+async def map_roles_to_slots(state: StoryState) -> Dict[str, Any]:
+    """[v0.2.3] 独立的角色分配节点。"""
+    client = get_story_client()
+    profiles = {rid: asset.get("profile", "") for rid, asset in state.role_assets.items()}
+    mapping_raw = await client.map_roles_to_slots_async(state.roles, profiles, state.story_framework)
+    try:
+        mapping = json.loads(mapping_raw)
+    except:
+        mapping = {rid: "Generic Role" for rid in state.roles}
+    return {"role_mapping": mapping}
+
+
+async def plan_global_story(state: StoryState) -> Dict[str, Any]:
     client = get_story_client()
     outline = await client.plan_global_story_async(
-        topic=state["topic"],
-        style=state["style"],
-        role_ids=state.get("roles", []),
-        framework=state.get("story_framework", ""),
-        token_callback=state.get("event_callback"),
+        state.topic, state.style, state.role_mapping, state.story_framework, state.event_callback
     )
-    return {**state, "global_outline": outline}
+    return {"global_outline": outline}
 
 
-async def wait_for_user_outline(state: StoryState) -> StoryState:
-    """[Alpha 0.2] HITL 中断点：等待用户确认/编辑大纲。"""
-    _emit_event(state, {"event": "node_log", "node": "wait_for_user_outline", "message": "Outline ready. Waiting for user confirmation..."})
-    return state
-
-
-async def adapt_roles_to_framework(state: StoryState) -> StoryState:
-    """[v0.2.2] 并行生成每个演员在当前故事中的特定设定。"""
+async def adapt_roles_to_framework(state: StoryState) -> Dict[str, Any]:
+    """[v0.2.3] 容错并发适配。"""
     client = get_story_client()
-    roles = state.get("roles", [])
-    role_assets = state.get("role_assets", {})
-    framework = state.get("story_framework", "")
-    outline = state.get("global_outline", "")
-    
     tasks = []
-    for rid in roles:
-        profile = role_assets.get(rid, {}).get("profile", "")
-        tasks.append(client.adapt_role_to_framework_async(
-            role_id=rid, generic_profile=profile, framework=framework, outline=outline,
-            token_callback=state.get("event_callback")
+    for rid in state.roles:
+        profile = state.role_assets.get(rid, {}).get("profile", "")
+        tasks.append(robust_task(
+            client.adapt_role_to_framework_async(rid, profile, state.story_framework, state.global_outline, state.event_callback),
+            rid, "adapt_roles", state
         ))
     
     results = await asyncio.gather(*tasks)
-    identities = dict(zip(roles, results))
-    _emit_event(state, {"event": "node_log", "node": "adapt_roles", "message": f"Adapted {len(roles)} actors to story slots."})
-    return {**state, "role_story_identities": identities}
-
-
-async def retrieve_role_rag_contexts(state: StoryState) -> StoryState:
-    if not state.get("rag_enabled"):
-        return {**state, "rag_role_contexts": {}}
-    story_id = state.get("story_id")
-    roles = state.get("roles", [])
-    top_k = state.get("rag_top_k")
-    tasks = [format_role_rag_context_async(story_id, rid, roles, f"Topic: {state.get('topic')}", top_k) for rid in roles]
-    results = await asyncio.gather(*tasks)
-    return {**state, "rag_role_contexts": dict(zip(roles, results))}
-
-
-async def generate_role_views(state: StoryState) -> StoryState:
-    client = get_story_client()
-    roles = state.get("roles", [])
-    role_assets = state.get("role_assets", {})
-    rag_contexts = state.get("rag_role_contexts", {})
-    story_identities = state.get("role_story_identities", {})
+    identities = {}
+    for rid, res in zip(state.roles, results):
+        try:
+            identities[rid] = RoleStoryIdentity.parse_raw(res)
+        except:
+            identities[rid] = RoleStoryIdentity(story_name=rid, story_personality_manifestation="As usual", story_specific_goal="Explore")
     
+    # 同时生成关系网
+    rel_matrix = await client.generate_relationships_async(state.roles, {r: i.json() for r, i in identities.items()})
+    return {"role_story_identities": identities, "relationship_matrix": rel_matrix}
+
+
+async def retrieve_role_rag_contexts(state: StoryState) -> Dict[str, Any]:
+    if not state.rag_enabled:
+        return {"rag_role_contexts": {}}
+    tasks = [format_role_rag_context_async(state.story_id, rid, state.roles, f"Topic: {state.topic}", state.rag_top_k) for rid in state.roles]
+    results = await asyncio.gather(*tasks)
+    return {"rag_role_contexts": dict(zip(state.roles, results))}
+
+
+async def generate_role_views(state: StoryState) -> Dict[str, Any]:
+    """[v0.2.3] 容错并发生成。"""
+    client = get_story_client()
     tasks = []
-    for rid in roles:
-        asset = role_assets.get(rid, {"profile": "", "memory": ""})
-        tasks.append(client.generate_role_view_async(
-            role_id=rid, generic_profile=asset["profile"], 
-            story_identity=story_identities.get(rid, "{}"),
-            memory=asset["memory"],
-            rag_context=rag_contexts.get(rid, ""), outline=state["global_outline"],
-            style=state["style"], token_callback=state.get("event_callback"),
+    for rid in state.roles:
+        asset = state.role_assets.get(rid, {})
+        identity = state.role_story_identities.get(rid, RoleStoryIdentity(story_name=rid, story_personality_manifestation="", story_specific_goal="")).json()
+        tasks.append(robust_task(
+            client.generate_role_view_async(
+                rid, asset.get("profile", ""), identity, state.relationship_matrix,
+                asset.get("memory", ""), state.rag_role_contexts.get(rid, ""),
+                state.global_outline, state.style, state.event_callback
+            ),
+            rid, "generate_role_views", state
         ))
     results = await asyncio.gather(*tasks)
-    return {**state, "role_view_drafts": dict(zip(roles, results))}
+    return {"role_view_drafts": dict(zip(state.roles, results))}
 
 
-async def integrate_perspectives(state: StoryState) -> StoryState:
+async def integrate_perspectives(state: StoryState) -> Dict[str, Any]:
     client = get_story_client()
-    integrated = await client.integrate_perspectives_async(
-        topic=state.get("topic", ""),
-        style=state.get("style", ""),
-        role_drafts=state.get("role_view_drafts", {}),
-        token_callback=state.get("event_callback"),
-    )
-    return {**state, "integrated_draft": integrated}
+    integrated = await client.integrate_perspectives_async(state.topic, state.style, state.role_view_drafts, state.event_callback)
+    return {"integrated_draft": integrated}
 
 
-async def quality_check(state: StoryState) -> StoryState:
+async def quality_check(state: StoryState) -> Dict[str, Any]:
     client = get_story_client()
-    report_raw = await client.quality_check_async(
-        outline=state.get("global_outline", ""),
-        integrated_story=state.get("integrated_draft", ""),
-        role_ids=state.get("roles", []),
-        token_callback=state.get("event_callback"),
-    )
+    report_raw = await client.quality_check_async(state.global_outline, state.integrated_draft, state.roles, state.event_callback)
     try:
-        report = json.loads(report_raw)
-    except Exception:
-        report = {"status": "FAIL", "score": 0, "conflicts": ["Invalid JSON output from QA model"]}
+        report = QualityReport.parse_raw(report_raw)
+    except:
+        report = QualityReport(status="FAIL", conflicts=["Invalid JSON from QA"])
     
-    retry_count = state.get("retry_count", 0)
-    if report.get("status") == "FAIL":
-        retry_count += 1
-    return {**state, "quality_report": json.dumps(report, ensure_ascii=False), "retry_count": retry_count}
+    new_retry = state.retry_count + (1 if report.status == "FAIL" else 0)
+    return {"quality_report": report, "retry_count": new_retry}
 
 
 def route_after_quality(state: StoryState) -> str:
-    report = json.loads(state.get("quality_report", '{"status": "PASS"}'))
-    if report.get("status") == "FAIL" and state.get("retry_count", 0) <= state.get("max_retry", 1):
+    if state.quality_report and state.quality_report.status == "FAIL" and state.retry_count <= state.max_retry:
         return "generate_role_views"
     return "finalize_output"
 
 
-async def finalize_output(state: StoryState) -> StoryState:
-    final_story = state.get("integrated_draft", "")
-    run_id = insert_story_run(
-        topic=state.get("topic", ""),
-        style=state.get("style", ""),
-        roles_json=json.dumps(state.get("roles", [])),
-        integrated_draft=state.get("integrated_draft", ""),
-        final_story=final_story,
-        db_path=str(SQLITE_DB_PATH),
-    )
+async def finalize_output(state: StoryState) -> Dict[str, Any]:
+    run_id = insert_story_run(state.topic, state.style, json.dumps(state.roles), state.integrated_draft, state.integrated_draft, str(SQLITE_DB_PATH))
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    memory_slice_paths = []
-    for rid, content in state.get("role_view_drafts", {}).items():
-        path = persist_generated_role_slice(
-            role_id=rid, story_id=state["story_id"], run_id=run_id,
-            chapter_timestamp=ts, topic=state["topic"], style=state["style"],
-            content=content
-        )
-        memory_slice_paths.append(str(path))
-    
-    story_opt_dir = OPT_STORIES_DIR / state["story_id"]
-    story_opt_dir.mkdir(exist_ok=True)
-    (story_opt_dir / f"final_run_{run_id}.md").write_text(f"# {state['topic']}\n\n{final_story}", encoding="utf-8")
-
-    return {**state, "final_story": final_story, "run_id": run_id, "memory_slice_paths": memory_slice_paths}
+    paths = []
+    for rid, content in state.role_view_drafts.items():
+        p = persist_generated_role_slice(rid, state.story_id, run_id, ts, state.topic, state.style, content)
+        paths.append(str(p))
+    return {"final_story": state.integrated_draft, "run_id": run_id, "memory_slice_paths": paths}
 
 
-async def distill_memories(state: StoryState) -> StoryState:
-    for rid, content in state.get("role_view_drafts", {}).items():
+async def distill_memories(state: StoryState) -> Dict[str, Any]:
+    """[v0.2.3] 改进的记忆蒸馏：追加到汇总。后续可加 LLM 压缩。"""
+    for rid, content in state.role_view_drafts.items():
         summary_path = MEMORY_DIR / rid / f"{rid}_summary.md"
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         with open(summary_path, "a", encoding="utf-8") as f:
-            f.write(f"\n\n### Chapter Run {state.get('run_id')}\n{content.strip()}\n")
-    return state
+            f.write(f"\n\n### Chapter Run {state.run_id} ({datetime.now().isoformat()})\n{content.strip()}\n")
+    return {}
 
 
 def build_graph():
+    # 注意：Pydantic 模型在 LangGraph 中通常作为 Dict 处理，或者在节点中转换
     graph = StateGraph(StoryState)
+    
     nodes = [
         ("collect_requirements", collect_requirements),
         ("load_story_framework", load_story_framework_node),
         ("load_roles", load_roles),
         ("index_role_memories_for_rag", index_role_memories_for_rag),
+        ("map_roles_to_slots", map_roles_to_slots),
         ("plan_global_story", plan_global_story),
-        ("wait_for_user_outline", wait_for_user_outline),
         ("adapt_roles_to_framework", adapt_roles_to_framework),
         ("retrieve_role_rag_contexts", retrieve_role_rag_contexts),
         ("generate_role_views", generate_role_views),
@@ -249,9 +218,9 @@ def build_graph():
     graph.add_edge("collect_requirements", "load_story_framework")
     graph.add_edge("load_story_framework", "load_roles")
     graph.add_edge("load_roles", "index_role_memories_for_rag")
-    graph.add_edge("index_role_memories_for_rag", "plan_global_story")
-    graph.add_edge("plan_global_story", "wait_for_user_outline")
-    graph.add_edge("wait_for_user_outline", "adapt_roles_to_framework")
+    graph.add_edge("index_role_memories_for_rag", "map_roles_to_slots")
+    graph.add_edge("map_roles_to_slots", "plan_global_story")
+    graph.add_edge("plan_global_story", "adapt_roles_to_framework")
     graph.add_edge("adapt_roles_to_framework", "retrieve_role_rag_contexts")
     graph.add_edge("retrieve_role_rag_contexts", "generate_role_views")
     graph.add_edge("generate_role_views", "integrate_perspectives")
