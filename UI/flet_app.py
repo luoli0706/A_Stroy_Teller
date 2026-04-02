@@ -22,7 +22,6 @@ from app.role_memory import (
     discover_roles,
 )
 from app.runtime import build_input_state, stream_story_events
-from app.story_framework import load_story_framework
 from app.sqlite_store import get_story_run, list_story_runs
 
 
@@ -39,8 +38,12 @@ I18N = {
         "story_tab_generation": "故事生成",
         "story_route_hint": "当前路由: 页={page} | 故事标签={story_tab} | 生成子标签={generation_tab}",
         "framework_id": "框架查询 ID",
-        "framework_preview": "框架内容预览",
+        "framework_preview": "框架内容",
         "query_framework": "查询框架",
+        "save_framework": "新增/编辑框架",
+        "framework_saved": "框架已保存: {story_id}",
+        "framework_content_required": "请输入框架内容。",
+        "framework_initialized": "框架不存在，已载入新框架模板: {story_id}",
         "refresh_frameworks": "刷新框架列表",
         "framework_load": "加载框架",
         "frameworks_header": "可用框架",
@@ -111,7 +114,7 @@ I18N = {
         "no_memory_slices": "当前角色暂无记忆切片。",
         "active_memory_slice": "当前切片: {story_id}",
         "active_memory_slice_none": "当前切片: 无",
-        "add_update_profile": "新增/更新设定",
+        "add_update_profile": "新增/编辑角色设定",
         "delete_profile": "删除设定",
         "add_update_memory": "新增/更新记忆",
         "delete_memory": "删除记忆",
@@ -168,8 +171,12 @@ I18N = {
         "story_tab_generation": "Generation",
         "story_route_hint": "Route: page={page} | story tab={story_tab} | generation tab={generation_tab}",
         "framework_id": "Framework Query ID",
-        "framework_preview": "Framework Preview",
+        "framework_preview": "Framework Content",
         "query_framework": "Query Framework",
+        "save_framework": "Add/Edit Framework",
+        "framework_saved": "Framework saved: {story_id}",
+        "framework_content_required": "Please input framework content.",
+        "framework_initialized": "Framework not found; initialized a new template: {story_id}",
         "refresh_frameworks": "Refresh Frameworks",
         "framework_load": "Load Framework",
         "frameworks_header": "Available Frameworks",
@@ -240,7 +247,7 @@ I18N = {
         "no_memory_slices": "No memory slices for current role.",
         "active_memory_slice": "Active Slice: {story_id}",
         "active_memory_slice_none": "Active Slice: none",
-        "add_update_profile": "Add/Update Profile",
+        "add_update_profile": "Add/Edit Role Profile",
         "delete_profile": "Delete Profile",
         "add_update_memory": "Add/Update Memory",
         "delete_memory": "Delete Memory",
@@ -367,7 +374,7 @@ def main(page: ft.Page) -> None:
         multiline=True,
         min_lines=5,
         max_lines=6,
-        read_only=True,
+        read_only=False,
         value="",
         bgcolor="#ffffff",
     )
@@ -536,6 +543,27 @@ def main(page: ft.Page) -> None:
             if child.is_dir() and (child / "framework.md").exists()
         )
 
+    def _normalize_story_framework_id(value: str) -> str:
+        return value.strip().replace(" ", "_")
+
+    def _framework_file_path(story_framework_id: str) -> Path:
+        return Path("stories") / story_framework_id / "framework.md"
+
+    def _framework_template(story_framework_id: str) -> str:
+        return (
+            f"# {story_framework_id} Framework\n\n"
+            "## Theme\n"
+            "- Core conflict\n"
+            "- Emotional arc\n\n"
+            "## Structure\n"
+            "- Act 1: Setup\n"
+            "- Act 2: Escalation\n"
+            "- Act 3: Resolution\n\n"
+            "## Constraints\n"
+            "- Keep role voices distinct\n"
+            "- Keep facts consistent\n"
+        )
+
     def render_frameworks() -> None:
         framework_ids = _list_story_framework_ids()
         framework_selector.options = [ft.dropdown.Option(key=item, text=item) for item in framework_ids]
@@ -546,19 +574,26 @@ def main(page: ft.Page) -> None:
         page.update()
 
     def load_framework_to_editor(target_story_id: str, announce: bool = True) -> None:
-        requested_id = target_story_id.strip()
+        requested_id = _normalize_story_framework_id(target_story_id)
         if not requested_id:
             set_ui_status(tr("framework_query_required"), "#a21515")
             return
 
-        resolved_story_id, framework_text = load_story_framework(requested_id, "stories")
+        framework_path = _framework_file_path(requested_id)
+        if framework_path.exists():
+            framework_text = framework_path.read_text(encoding="utf-8").strip()
+            loaded_message = tr("framework_loaded", story_id=requested_id)
+        else:
+            framework_text = _framework_template(requested_id)
+            loaded_message = tr("framework_initialized", story_id=requested_id)
+
         story_framework_id_input.value = requested_id
-        story_id.value = resolved_story_id
+        story_id.value = requested_id
         framework_preview_input.value = framework_text
-        resolved_framework_id["value"] = resolved_story_id
-        framework_resolved_text.value = tr("framework_resolved", story_id=resolved_story_id)
+        resolved_framework_id["value"] = requested_id
+        framework_resolved_text.value = tr("framework_resolved", story_id=requested_id)
         if announce:
-            set_ui_status(tr("framework_loaded", story_id=resolved_story_id), "#0f7a2a")
+            set_ui_status(loaded_message, "#0f7a2a")
         page.update()
 
     def handle_query_framework(_: ft.ControlEvent) -> None:
@@ -570,6 +605,30 @@ def main(page: ft.Page) -> None:
             set_ui_status(tr("no_frameworks"), "#a21515")
             return
         load_framework_to_editor(selected)
+
+    def handle_save_framework(_: ft.ControlEvent) -> None:
+        requested_id = _normalize_story_framework_id(story_framework_id_input.value)
+        if not requested_id:
+            set_ui_status(tr("framework_query_required"), "#a21515")
+            return
+
+        content = framework_preview_input.value.strip()
+        if not content:
+            set_ui_status(tr("framework_content_required"), "#a21515")
+            return
+
+        framework_path = _framework_file_path(requested_id)
+        framework_path.parent.mkdir(parents=True, exist_ok=True)
+        framework_path.write_text(content + "\n", encoding="utf-8")
+
+        story_framework_id_input.value = requested_id
+        story_id.value = requested_id
+        resolved_framework_id["value"] = requested_id
+        framework_resolved_text.value = tr("framework_resolved", story_id=requested_id)
+        render_frameworks()
+        framework_selector.value = requested_id
+        set_ui_status(tr("framework_saved", story_id=requested_id), "#0f7a2a")
+        page.update()
 
     def handle_framework_selector(_: ft.ControlEvent) -> None:
         story_framework_id_input.value = (framework_selector.value or "").strip()
@@ -886,6 +945,7 @@ def main(page: ft.Page) -> None:
         export_button.content = tr("export_opt")
         check_button.content = tr("check_health")
         query_framework_button.content = tr("query_framework")
+        save_framework_button.content = tr("save_framework")
         load_selected_framework_button.content = tr("framework_load")
         refresh_frameworks_button.content = tr("refresh_frameworks")
         story_framework_tab_button.content = tr("story_tab_framework")
@@ -1122,6 +1182,7 @@ def main(page: ft.Page) -> None:
     query_profile_button = ft.OutlinedButton("Query Profile", on_click=handle_query_role_profile)
     load_role_by_name_button = ft.OutlinedButton("Load By Name", on_click=handle_load_role_by_name)
     query_framework_button = ft.OutlinedButton("Query Framework", on_click=handle_query_framework)
+    save_framework_button = ft.Button("Add/Edit Framework", on_click=handle_save_framework)
     load_selected_framework_button = ft.OutlinedButton("Load Framework", on_click=handle_load_selected_framework)
     refresh_frameworks_button = ft.OutlinedButton("Refresh Frameworks", on_click=lambda _: render_frameworks())
     load_story_role_button = ft.OutlinedButton("Load Role To Generator", on_click=handle_load_story_role_by_name)
@@ -1169,7 +1230,10 @@ def main(page: ft.Page) -> None:
         wrap=True,
     )
 
-    framework_query_row = ft.Row([story_framework_id_input, query_framework_button, refresh_frameworks_button], wrap=True)
+    framework_query_row = ft.Row(
+        [story_framework_id_input, query_framework_button, save_framework_button, refresh_frameworks_button],
+        wrap=True,
+    )
     framework_select_row = ft.Row([framework_selector, load_selected_framework_button], wrap=True)
 
     story_framework_tab = ft.Container(
@@ -1366,14 +1430,14 @@ def main(page: ft.Page) -> None:
         content=ft.Column(
             [
                 role_header,
-                ft.Row([role_name_input, query_profile_button, load_role_by_name_button], wrap=True),
+                ft.Row([role_name_input, query_profile_button, load_role_by_name_button, add_profile_button], wrap=True),
                 ft.Row([role_id_input, memory_story_id_input, refresh_roles_button], wrap=True),
                 profile_input,
                 memory_slice_header,
                 active_memory_slice_text,
                 memory_slice_tabs,
                 memory_text_input,
-                ft.Row([add_profile_button, delete_profile_button], wrap=True),
+                ft.Row([delete_profile_button], wrap=True),
                 ft.Row([add_memory_button, delete_memory_button, delete_all_memory_button], wrap=True),
                 roles_list_header,
                 ft.Container(

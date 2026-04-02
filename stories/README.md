@@ -6,6 +6,7 @@ This folder stores reusable story frameworks.
 
 - `stories/default/framework.md`: fallback framework
 - `stories/<story_id>/framework.md`: framework for a specific story line
+- `stories/future_academy_city/framework.md`: 中文未来学园都市框架示例
 
 ## How it is used
 
