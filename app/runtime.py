@@ -18,7 +18,6 @@ def build_input_state(
 ) -> StoryState:
     logger, log_file_path = create_run_logger()
     
-    # 构造 Pydantic 模型
     state = StoryState(
         logger_name=logger.name,
         log_file_path=log_file_path,
@@ -38,7 +37,6 @@ def build_input_state(
 
 
 def _sanitize_for_json(value: Any) -> Any:
-    """递归处理 Pydantic 模型或其他非 JSON 序列化对象。"""
     if hasattr(value, "dict"):
         return _sanitize_for_json(value.dict())
     if isinstance(value, dict):
@@ -50,19 +48,22 @@ def _sanitize_for_json(value: Any) -> Any:
     return str(value)
 
 
-async def run_story_async(state: StoryState) -> Dict[str, Any]:
+async def run_story_async(state: StoryState, thread_id: str = "default_thread") -> Dict[str, Any]:
+    """支持持久化恢复的同步运行方法。"""
     graph = build_graph()
-    # 使用 Pydantic V2 的 model_dump
-    result = await graph.ainvoke(state.model_dump())
+    config = {"configurable": {"thread_id": thread_id}}
+    result = await graph.ainvoke(state.model_dump(), config=config)
     return _sanitize_for_json(result)
 
 
-async def stream_story_events_async(state: StoryState) -> AsyncIterator[dict]:
-    """异步流式产生事件。"""
+async def stream_story_events_async(state: StoryState, thread_id: str = "default_thread") -> AsyncIterator[dict]:
+    """[v0.2.4] 支持 Thread ID 的异步流式产生。"""
     graph = build_graph()
+    config = {"configurable": {"thread_id": thread_id}}
     
     try:
-        async for update in graph.astream(state.model_dump(), stream_mode="updates"):
+        # 传入 config 以启用持久化
+        async for update in graph.astream(state.model_dump(), config=config, stream_mode="updates"):
             for node_name, node_update in update.items():
                 yield {
                     "event": "node_update",

@@ -2,12 +2,13 @@ import json
 import logging
 import os
 import asyncio
-import traceback
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, List
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.checkpoint.sqlite import SqliteSaver # [v0.2.4] 引入持久化 Checkpointer
 
 from app.config import (
     ROLE_DIR, MEMORY_DIR, STORIES_DIR, SQLITE_DB_PATH, 
@@ -34,7 +35,6 @@ def _emit_event(state: StoryState, event: dict) -> None:
 
 
 async def robust_task(coro, role_id: str, node_name: str, state: StoryState):
-    """[v0.2.3] 并发容错包装器。"""
     try:
         return await coro
     except Exception as e:
@@ -46,8 +46,6 @@ async def robust_task(coro, role_id: str, node_name: str, state: StoryState):
 async def collect_requirements(state: StoryState) -> Dict[str, Any]:
     init_db(str(SQLITE_DB_PATH))
     get_story_client().assert_ready()
-    
-    # 填充默认值
     roles = state.roles if state.roles else discover_roles(str(ROLE_DIR))
     return {
         "roles": roles,
@@ -74,11 +72,11 @@ async def index_role_memories_for_rag(state: StoryState) -> Dict[str, Any]:
     if not state.rag_enabled:
         return {"rag_indexed_docs": 0}
     indexed = index_memory_directory(roles=state.roles)
+    _emit_event(state, {"event": "node_log", "node": "index", "message": f"RAG Incremental Indexed: {indexed}"})
     return {"rag_indexed_docs": indexed}
 
 
 async def map_roles_to_slots(state: StoryState) -> Dict[str, Any]:
-    """[v0.2.3] 独立的角色分配节点。"""
     client = get_story_client()
     profiles = {rid: asset.get("profile", "") for rid, asset in state.role_assets.items()}
     mapping_raw = await client.map_roles_to_slots_async(state.roles, profiles, state.story_framework)
@@ -97,8 +95,12 @@ async def plan_global_story(state: StoryState) -> Dict[str, Any]:
     return {"global_outline": outline}
 
 
+async def wait_for_user_outline(state: StoryState) -> StoryState:
+    _emit_event(state, {"event": "node_log", "node": "wait_for_user_outline", "message": "Breakpoint reached. Checkpoint saved."})
+    return state
+
+
 async def adapt_roles_to_framework(state: StoryState) -> Dict[str, Any]:
-    """[v0.2.3] 容错并发适配。"""
     client = get_story_client()
     tasks = []
     for rid in state.roles:
@@ -107,7 +109,6 @@ async def adapt_roles_to_framework(state: StoryState) -> Dict[str, Any]:
             client.adapt_role_to_framework_async(rid, profile, state.story_framework, state.global_outline, state.event_callback),
             rid, "adapt_roles", state
         ))
-    
     results = await asyncio.gather(*tasks)
     identities = {}
     for rid, res in zip(state.roles, results):
@@ -115,8 +116,6 @@ async def adapt_roles_to_framework(state: StoryState) -> Dict[str, Any]:
             identities[rid] = RoleStoryIdentity.parse_raw(res)
         except:
             identities[rid] = RoleStoryIdentity(story_name=rid, story_personality_manifestation="As usual", story_specific_goal="Explore")
-    
-    # 同时生成关系网
     rel_matrix = await client.generate_relationships_async(state.roles, {r: i.json() for r, i in identities.items()})
     return {"role_story_identities": identities, "relationship_matrix": rel_matrix}
 
@@ -130,7 +129,6 @@ async def retrieve_role_rag_contexts(state: StoryState) -> Dict[str, Any]:
 
 
 async def generate_role_views(state: StoryState) -> Dict[str, Any]:
-    """[v0.2.3] 容错并发生成。"""
     client = get_story_client()
     tasks = []
     for rid in state.roles:
@@ -161,7 +159,6 @@ async def quality_check(state: StoryState) -> Dict[str, Any]:
         report = QualityReport.parse_raw(report_raw)
     except:
         report = QualityReport(status="FAIL", conflicts=["Invalid JSON from QA"])
-    
     new_retry = state.retry_count + (1 if report.status == "FAIL" else 0)
     return {"quality_report": report, "retry_count": new_retry}
 
@@ -183,7 +180,6 @@ async def finalize_output(state: StoryState) -> Dict[str, Any]:
 
 
 async def distill_memories(state: StoryState) -> Dict[str, Any]:
-    """[v0.2.3] 改进的记忆蒸馏：追加到汇总。后续可加 LLM 压缩。"""
     for rid, content in state.role_view_drafts.items():
         summary_path = MEMORY_DIR / rid / f"{rid}_summary.md"
         summary_path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,8 +188,8 @@ async def distill_memories(state: StoryState) -> Dict[str, Any]:
     return {}
 
 
-def build_graph():
-    # 注意：Pydantic 模型在 LangGraph 中通常作为 Dict 处理，或者在节点中转换
+def build_graph(checkpoint_db_path: str = str(SQLITE_DB_PATH)):
+    """[v0.2.4] 构造支持持久化的图。"""
     graph = StateGraph(StoryState)
     
     nodes = [
@@ -203,6 +199,7 @@ def build_graph():
         ("index_role_memories_for_rag", index_role_memories_for_rag),
         ("map_roles_to_slots", map_roles_to_slots),
         ("plan_global_story", plan_global_story),
+        ("wait_for_user_outline", wait_for_user_outline),
         ("adapt_roles_to_framework", adapt_roles_to_framework),
         ("retrieve_role_rag_contexts", retrieve_role_rag_contexts),
         ("generate_role_views", generate_role_views),
@@ -220,7 +217,8 @@ def build_graph():
     graph.add_edge("load_roles", "index_role_memories_for_rag")
     graph.add_edge("index_role_memories_for_rag", "map_roles_to_slots")
     graph.add_edge("map_roles_to_slots", "plan_global_story")
-    graph.add_edge("plan_global_story", "adapt_roles_to_framework")
+    graph.add_edge("plan_global_story", "wait_for_user_outline")
+    graph.add_edge("wait_for_user_outline", "adapt_roles_to_framework")
     graph.add_edge("adapt_roles_to_framework", "retrieve_role_rag_contexts")
     graph.add_edge("retrieve_role_rag_contexts", "generate_role_views")
     graph.add_edge("generate_role_views", "integrate_perspectives")
@@ -231,4 +229,10 @@ def build_graph():
     })
     graph.add_edge("finalize_output", "distill_memories")
     graph.add_edge("distill_memories", END)
-    return graph.compile()
+
+    # 接入 Checkpointer
+    # 注意：在真实的 LangGraph 版本中通常使用 AsyncSqliteSaver
+    # 这里我们创建一个基于文件的同步持久化层以供 Alpha 演示
+    conn = sqlite3.connect(checkpoint_db_path, check_same_thread=False)
+    memory = SqliteSaver(conn)
+    return graph.compile(checkpointer=memory)
