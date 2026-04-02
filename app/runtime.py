@@ -52,8 +52,8 @@ def _sanitize_for_json(value: Any) -> Any:
 
 async def run_story_async(state: StoryState) -> Dict[str, Any]:
     graph = build_graph()
-    # 转换为 dict 传给 LangGraph，因为它内部处理 Pydantic 可能有版本兼容问题
-    result = await graph.ainvoke(state.dict())
+    # 使用 Pydantic V2 的 model_dump
+    result = await graph.ainvoke(state.model_dump())
     return _sanitize_for_json(result)
 
 
@@ -62,8 +62,7 @@ async def stream_story_events_async(state: StoryState) -> AsyncIterator[dict]:
     graph = build_graph()
     
     try:
-        # 传入模型或字典
-        async for update in graph.astream(state.dict(), stream_mode="updates"):
+        async for update in graph.astream(state.model_dump(), stream_mode="updates"):
             for node_name, node_update in update.items():
                 yield {
                     "event": "node_update",

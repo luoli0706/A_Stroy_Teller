@@ -59,6 +59,14 @@ class OllamaStoryClient:
 
     def assert_ready(self) -> None:
         try:
+            # 如果已有循环在运行，则跳过 asyncio.run
+            try:
+                loop = asyncio.get_running_loop()
+                if loop.is_running():
+                    return
+            except RuntimeError:
+                pass
+
             res = asyncio.run(self.health_check_async())
             if not res["ok"]:
                 raise RuntimeError(res["message"])
