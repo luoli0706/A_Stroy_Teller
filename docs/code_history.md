@@ -1,5 +1,12 @@
 # 代码更新历史 (Code History)
 
+## [v0.1.0-alpha.2.1] - 2026-04-02
+### 数据模型变更 (Data Model)
+- **通用角色设定 (Generic Profiles)**：重构了 `role/` 下的角色设定结构，剥离了特定故事背景。引入了“基础形象”、“性格特质”、“语言风格”等通用字段。
+- **角色映射蓝图 (Role Mapping)**：在蓝图中规划了“演员-槽位”映射逻辑，为后续动态替换故事角色名奠定基础。
+
+---
+
 ## [v0.1.0-alpha.2] - 2026-04-02
 ### 架构解耦与组件化 (Componentization)
 - **UI 组件化重构**：将 `flet_app.py` 拆分为 `UI/components/` 目录下的独立组件类（`LogViewer`, `StoryControlPanel`），实现了视图与控制逻辑的初步分离。
