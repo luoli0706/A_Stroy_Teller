@@ -82,8 +82,7 @@ class OllamaStoryClient:
             res = asyncio.run(self.health_check_async())
             if not res["ok"]:
                 raise RuntimeError(res["message"])
-        except Exception as e:
-            # 如果在已经运行的事件循环中调用，降级为同步逻辑或报错
+        except Exception:
             pass
 
     async def _chat_async(
@@ -93,18 +92,19 @@ class OllamaStoryClient:
         temperature: float | None = None,
         token_callback: Callable[[dict], None] | None = None,
         event_meta: dict | None = None,
+        response_format: str | None = None,
     ) -> str:
-        """核心异步聊天逻辑，支持流式 token 回调。"""
+        """核心异步聊天逻辑，支持流式 token 回调与 JSON 格式。"""
         llm = ChatOllama(
             model=model,
             base_url=self.base_url,
             temperature=self.temperature if temperature is None else temperature,
+            format=response_format # 支持 JSON 模式
         )
 
         if token_callback:
             parts: list[str] = []
             meta = event_meta or {}
-            # ChatOllama 的 astream 是异步迭代器
             async for chunk in llm.astream(prompt):
                 content = getattr(chunk, "content", "")
                 text = str(content) if not isinstance(content, list) else "".join(map(str, content))
@@ -119,7 +119,6 @@ class OllamaStoryClient:
                     })
             return "".join(parts).strip()
         
-        # 非流式异步调用
         response = await llm.ainvoke(prompt)
         content = getattr(response, "content", "")
         return str(content).strip() if not isinstance(content, list) else "\n".join(map(str, content)).strip()
@@ -193,14 +192,17 @@ class OllamaStoryClient:
         role_ids: list[str],
         token_callback: Callable[[dict], None] | None = None,
     ) -> str:
+        """[Alpha 0.2] 结构化质检，返回 JSON。"""
         prompt = (
-            "Evaluate consistency and role voice. Return PASS or FAIL.\n"
+            "Evaluate story consistency. Return ONLY a JSON object with fields: "
+            "'status' (PASS/FAIL), 'score' (0-10), 'conflicts' (list of strings), 'suggestions' (list).\n\n"
             f"Roles: {', '.join(role_ids)}\nOutline:\n{outline}\n\nStory:\n{integrated_story}"
         )
         return await self._chat_async(
-            self.model_quality, prompt, temperature=0.2,
+            self.model_quality, prompt, temperature=0.1,
             token_callback=token_callback,
-            event_meta={"node": "quality_check"}
+            event_meta={"node": "quality_check"},
+            response_format="json"
         )
 
 _client_instance = None
