@@ -1,0 +1,58 @@
+import flet as ft
+
+
+def build_role_page(
+    *,
+    role_header: ft.Control,
+    role_name_input: ft.Control,
+    query_profile_button: ft.Control,
+    load_role_by_name_button: ft.Control,
+    add_profile_button: ft.Control,
+    role_id_input: ft.Control,
+    memory_story_id_input: ft.Control,
+    refresh_roles_button: ft.Control,
+    profile_input: ft.Control,
+    memory_slice_header: ft.Control,
+    active_memory_slice_text: ft.Control,
+    memory_slice_tabs: ft.Control,
+    memory_text_input: ft.Control,
+    delete_profile_button: ft.Control,
+    add_memory_button: ft.Control,
+    delete_memory_button: ft.Control,
+    delete_all_memory_button: ft.Control,
+    roles_list_header: ft.Control,
+    role_list: ft.Control,
+) -> ft.Container:
+    return ft.Container(
+        visible=False,
+        expand=True,
+        padding=14,
+        border_radius=14,
+        bgcolor="#ffffff",
+        border=ft.Border.all(1, "#dfe4ed"),
+        content=ft.Column(
+            [
+                role_header,
+                ft.Row([role_name_input, query_profile_button, load_role_by_name_button, add_profile_button], wrap=True),
+                ft.Row([role_id_input, memory_story_id_input, refresh_roles_button], wrap=True),
+                profile_input,
+                memory_slice_header,
+                active_memory_slice_text,
+                memory_slice_tabs,
+                memory_text_input,
+                ft.Row([delete_profile_button], wrap=True),
+                ft.Row([add_memory_button, delete_memory_button, delete_all_memory_button], wrap=True),
+                roles_list_header,
+                ft.Container(
+                    content=role_list,
+                    border=ft.Border.all(1, "#d7dce5"),
+                    padding=8,
+                    border_radius=10,
+                    expand=True,
+                ),
+            ],
+            spacing=12,
+            expand=True,
+            scroll=ft.ScrollMode.AUTO,
+        ),
+    )

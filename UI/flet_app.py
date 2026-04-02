@@ -1,6 +1,7 @@
 import json
 import threading
 from datetime import datetime
+import os
 from pathlib import Path
 import sys
 from typing import Any
@@ -23,6 +24,7 @@ from app.role_memory import (
 )
 from app.runtime import build_input_state, stream_story_events
 from app.sqlite_store import get_story_run, list_story_runs
+from UI.pages import build_role_page, build_settings_page, build_story_page
 
 
 I18N = {
@@ -130,8 +132,22 @@ I18N = {
         "setting_model_role": "角色模型",
         "setting_model_integrator": "整合模型",
         "setting_model_quality": "质检模型",
+        "setting_model_embedding": "嵌入模型",
+        "setting_rag_enabled": "启用 RAG",
+        "setting_rag_top_k": "RAG Top-K",
+        "setting_rag_chroma_dir": "RAG 向量库目录",
+        "setting_rag_collection": "RAG Collection",
         "setting_log_dir": "日志目录",
         "setting_opt_dir": "导出目录",
+        "settings_section_runtime": "运行时设置",
+        "settings_section_models": "模型设置",
+        "settings_section_rag": "RAG 节点设置",
+        "settings_section_paths": "路径信息",
+        "apply_settings": "应用设置",
+        "save_settings_env": "保存到 .env",
+        "settings_applied": "设置已应用到当前会话。",
+        "settings_saved_env": "设置已保存到 .env 并应用。",
+        "invalid_rag_top_k": "RAG Top-K 必须是大于 0 的整数。",
         "health_ok": "健康检查：正常 | {message}",
         "health_failed": "健康检查：失败 | {message}",
         "no_story_runs": "暂无故事运行记录。",
@@ -263,8 +279,22 @@ I18N = {
         "setting_model_role": "Role Model",
         "setting_model_integrator": "Integrator Model",
         "setting_model_quality": "Quality Model",
+        "setting_model_embedding": "Embedding Model",
+        "setting_rag_enabled": "Enable RAG",
+        "setting_rag_top_k": "RAG Top-K",
+        "setting_rag_chroma_dir": "RAG Chroma Directory",
+        "setting_rag_collection": "RAG Collection",
         "setting_log_dir": "Log Directory",
         "setting_opt_dir": "Export Directory",
+        "settings_section_runtime": "Runtime Settings",
+        "settings_section_models": "Model Settings",
+        "settings_section_rag": "RAG Node Settings",
+        "settings_section_paths": "Path Info",
+        "apply_settings": "Apply Settings",
+        "save_settings_env": "Save To .env",
+        "settings_applied": "Settings applied to current session.",
+        "settings_saved_env": "Settings saved to .env and applied.",
+        "invalid_rag_top_k": "RAG Top-K must be an integer greater than 0.",
         "health_ok": "Health: OK | {message}",
         "health_failed": "Health: FAILED | {message}",
         "no_story_runs": "No story runs found.",
@@ -419,6 +449,10 @@ def main(page: ft.Page) -> None:
     role_header = ft.Text(tr("role_management"), size=18, weight=ft.FontWeight.W_600)
     roles_list_header = ft.Text(tr("roles_header"), size=16, weight=ft.FontWeight.W_600)
     settings_header = ft.Text(tr("settings"), size=18, weight=ft.FontWeight.W_600)
+    settings_runtime_header = ft.Text(tr("settings_section_runtime"), size=16, weight=ft.FontWeight.W_600)
+    settings_models_header = ft.Text(tr("settings_section_models"), size=16, weight=ft.FontWeight.W_600)
+    settings_rag_header = ft.Text(tr("settings_section_rag"), size=16, weight=ft.FontWeight.W_600)
+    settings_paths_header = ft.Text(tr("settings_section_paths"), size=16, weight=ft.FontWeight.W_600)
 
     def render_event_stream_hint() -> None:
         if not event_stream_log.controls:
@@ -790,18 +824,122 @@ def main(page: ft.Page) -> None:
             return
         load_role_to_editor(role_id)
 
+    def _bool_flag(value: str | bool | None, default: bool = True) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+    def _collect_settings_values() -> dict[str, str]:
+        rag_top_k_raw = (settings_rag_top_k.value or "").strip() or "4"
+        try:
+            rag_top_k = int(rag_top_k_raw)
+        except ValueError as exc:
+            raise ValueError(tr("invalid_rag_top_k")) from exc
+        if rag_top_k < 1:
+            raise ValueError(tr("invalid_rag_top_k"))
+
+        rag_enabled = "true" if _bool_flag(settings_rag_enabled.value, True) else "false"
+
+        values = {
+            "OLLAMA_BASE_URL": (settings_base_url.value or "").strip() or "http://127.0.0.1:11434",
+            "OLLAMA_MODEL_PLANNER": (settings_model_planner.value or "").strip() or "qwen3.5:9b",
+            "OLLAMA_MODEL_ROLE": (settings_model_role.value or "").strip() or "qwen3.5:9b",
+            "OLLAMA_MODEL_INTEGRATOR": (settings_model_integrator.value or "").strip() or "qwen3.5:9b",
+            "OLLAMA_MODEL_QUALITY": (
+                (settings_model_quality.value or "").strip()
+                or (settings_model_integrator.value or "").strip()
+                or "qwen3.5:9b"
+            ),
+            "OLLAMA_MODEL_EMBEDDING": (
+                (settings_model_embedding.value or "").strip() or "nomic-embed-text-v2-moe"
+            ),
+            "RAG_ENABLED": rag_enabled,
+            "RAG_TOP_K": str(rag_top_k),
+            "RAG_CHROMA_DIR": (settings_rag_chroma_dir.value or "").strip() or ".data/rag_chroma",
+            "RAG_COLLECTION_NAME": (
+                (settings_rag_collection.value or "").strip() or "story_memory_slices"
+            ),
+        }
+        return values
+
+    def _apply_runtime_settings(values: dict[str, str]) -> None:
+        for key, value in values.items():
+            os.environ[key] = value
+        get_story_client.cache_clear()
+        get_story_client()
+
+    def _update_env_file(values: dict[str, str], env_path: Path = Path(".env")) -> None:
+        if env_path.exists():
+            lines = env_path.read_text(encoding="utf-8").splitlines()
+        else:
+            lines = []
+
+        remaining = dict(values)
+        output: list[str] = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in line:
+                output.append(line)
+                continue
+
+            key, _ = line.split("=", 1)
+            key = key.strip()
+            if key in remaining:
+                output.append(f"{key}={remaining.pop(key)}")
+            else:
+                output.append(line)
+
+        if output and output[-1].strip():
+            output.append("")
+        for key, value in remaining.items():
+            output.append(f"{key}={value}")
+
+        env_path.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
+
+    def handle_apply_settings(_: ft.ControlEvent) -> None:
+        try:
+            values = _collect_settings_values()
+            _apply_runtime_settings(values)
+            refresh_settings_snapshot()
+            set_ui_status(tr("settings_applied"), "#0f7a2a")
+        except Exception as exc:
+            set_ui_status(str(exc), "#a21515")
+
+    def handle_save_settings(_: ft.ControlEvent) -> None:
+        try:
+            values = _collect_settings_values()
+            _apply_runtime_settings(values)
+            _update_env_file(values)
+            refresh_settings_snapshot()
+            set_ui_status(tr("settings_saved_env"), "#0f7a2a")
+        except Exception as exc:
+            set_ui_status(str(exc), "#a21515")
+
     def refresh_settings_snapshot() -> None:
         client = get_story_client()
-        settings_base_url.value = client.base_url
-        settings_model_planner.value = client.model_planner
-        settings_model_role.value = client.model_role
-        settings_model_integrator.value = client.model_integrator
-        settings_model_quality.value = client.model_quality
+        settings_base_url.value = os.getenv("OLLAMA_BASE_URL", client.base_url)
+        settings_model_planner.value = os.getenv("OLLAMA_MODEL_PLANNER", client.model_planner)
+        settings_model_role.value = os.getenv("OLLAMA_MODEL_ROLE", client.model_role)
+        settings_model_integrator.value = os.getenv("OLLAMA_MODEL_INTEGRATOR", client.model_integrator)
+        settings_model_quality.value = os.getenv("OLLAMA_MODEL_QUALITY", client.model_quality)
+        settings_model_embedding.value = os.getenv("OLLAMA_MODEL_EMBEDDING", client.model_embedding)
+        settings_rag_enabled.value = "true" if _bool_flag(os.getenv("RAG_ENABLED", "true"), True) else "false"
+        settings_rag_top_k.value = os.getenv("RAG_TOP_K", "4")
+        settings_rag_chroma_dir.value = os.getenv("RAG_CHROMA_DIR", ".data/rag_chroma")
+        settings_rag_collection.value = os.getenv("RAG_COLLECTION_NAME", "story_memory_slices")
         settings_log_dir.value = str(Path("logs").resolve())
         settings_opt_dir.value = str(Path("opt").resolve())
         page.update()
 
     def handle_health(_: ft.ControlEvent) -> None:
+        try:
+            values = _collect_settings_values()
+            _apply_runtime_settings(values)
+        except Exception as exc:
+            set_ui_status(str(exc), "#a21515")
+            return
         result = get_story_client().health_check()
         health_text.value = (
             tr("health_ok", message=result.message)
@@ -936,6 +1074,10 @@ def main(page: ft.Page) -> None:
         role_header.value = tr("role_management")
         roles_list_header.value = tr("roles_header")
         settings_header.value = tr("settings")
+        settings_runtime_header.value = tr("settings_section_runtime")
+        settings_models_header.value = tr("settings_section_models")
+        settings_rag_header.value = tr("settings_section_rag")
+        settings_paths_header.value = tr("settings_section_paths")
 
         run_single_button.content = tr("generate_single_story")
         run_single_quick_button.content = tr("generate_single_story")
@@ -956,6 +1098,8 @@ def main(page: ft.Page) -> None:
         refresh_history_button.content = tr("refresh_history")
         refresh_roles_button.content = tr("refresh_roles")
         refresh_settings_button.content = tr("refresh_settings")
+        apply_settings_button.content = tr("apply_settings")
+        save_settings_button.content = tr("save_settings_env")
         add_profile_button.content = tr("add_update_profile")
         delete_profile_button.content = tr("delete_profile")
         add_memory_button.content = tr("add_update_memory")
@@ -1012,6 +1156,11 @@ def main(page: ft.Page) -> None:
         settings_model_role.label = tr("setting_model_role")
         settings_model_integrator.label = tr("setting_model_integrator")
         settings_model_quality.label = tr("setting_model_quality")
+        settings_model_embedding.label = tr("setting_model_embedding")
+        settings_rag_enabled.label = tr("setting_rag_enabled")
+        settings_rag_top_k.label = tr("setting_rag_top_k")
+        settings_rag_chroma_dir.label = tr("setting_rag_chroma_dir")
+        settings_rag_collection.label = tr("setting_rag_collection")
         settings_log_dir.label = tr("setting_log_dir")
         settings_opt_dir.label = tr("setting_opt_dir")
 
@@ -1062,12 +1211,17 @@ def main(page: ft.Page) -> None:
             if not selected_roles:
                 raise ValueError(tr("story_roles_required"))
 
+            settings_values = _collect_settings_values()
+            _apply_runtime_settings(settings_values)
+
             state = build_input_state(
                 story_id=story_id.value.strip() or "default",
                 topic=topic.value.strip() or "an unexpected friendship",
                 style=style.value.strip() or "warm",
                 roles=selected_roles,
                 max_retry=int(max_retry.value.strip() or "1"),
+                rag_enabled=settings_values["RAG_ENABLED"] == "true",
+                rag_top_k=int(settings_values["RAG_TOP_K"]),
             )
 
             final_state: dict[str, Any] = dict(state)
@@ -1195,6 +1349,8 @@ def main(page: ft.Page) -> None:
     refresh_history_button = ft.OutlinedButton("Refresh History", on_click=lambda _: render_history())
     refresh_roles_button = ft.OutlinedButton("Refresh Roles", on_click=lambda _: render_roles())
     refresh_settings_button = ft.OutlinedButton("Refresh Settings", on_click=lambda _: refresh_settings_snapshot())
+    apply_settings_button = ft.Button("Apply Settings", on_click=handle_apply_settings)
+    save_settings_button = ft.OutlinedButton("Save To .env", on_click=handle_save_settings)
 
     memory_slice_header = ft.Text(tr("memory_slices"), size=16, weight=ft.FontWeight.W_600)
     story_mode_header = ft.Text(tr("story_mode"), size=16, weight=ft.FontWeight.W_600)
@@ -1337,155 +1493,94 @@ def main(page: ft.Page) -> None:
         content=story_generation_tab,
     )
 
-    story_page = ft.Container(
-        visible=True,
-        expand=True,
-        content=ft.Column(
-            [
-                ft.Row(
-                    [
-                        ft.Container(
-                            expand=2,
-                            padding=14,
-                            border_radius=14,
-                            bgcolor="#ffffff",
-                            border=ft.Border.all(1, "#dfe4ed"),
-                            content=ft.Column(
-                                [
-                                    story_input_header,
-                                    ft.Row([story_framework_tab_button, story_generation_tab_button], wrap=True),
-                                    story_route_hint_text,
-                                    story_tab_host,
-                                    run_meta_text,
-                                    ui_status_text,
-                                    ft.Container(
-                                        border=ft.Border.all(1, "#d7dce5"),
-                                        border_radius=10,
-                                        padding=10,
-                                        bgcolor="#ffffff",
-                                        content=ft.Column(
-                                            [
-                                                event_stream_header,
-                                                ft.Container(
-                                                    content=event_stream_log,
-                                                    border=ft.Border.all(1, "#d7dce5"),
-                                                    border_radius=8,
-                                                    padding=8,
-                                                    bgcolor="#ffffff",
-                                                    height=96,
-                                                ),
-                                            ],
-                                            spacing=8,
-                                        ),
-                                    ),
-                                ],
-                                spacing=12,
-                                scroll=ft.ScrollMode.AUTO,
-                            ),
-                        ),
-                        ft.Container(
-                            expand=3,
-                            padding=14,
-                            border_radius=14,
-                            bgcolor="#ffffff",
-                            border=ft.Border.all(1, "#dfe4ed"),
-                            content=ft.Column(
-                                [
-                                    outputs_header,
-                                    token_stream,
-                                    quality_report,
-                                    final_story,
-                                    ft.Divider(),
-                                    history_header,
-                                    ft.Row([history_limit, refresh_history_button], wrap=True),
-                                    selected_run_text,
-                                    ft.Container(
-                                        content=history_log,
-                                        border=ft.Border.all(1, "#d7dce5"),
-                                        padding=8,
-                                        border_radius=10,
-                                        height=180,
-                                    ),
-                                ],
-                                expand=True,
-                                spacing=12,
-                            ),
-                        ),
-                    ],
-                    expand=True,
-                )
-            ],
-            expand=True,
-            scroll=ft.ScrollMode.AUTO,
-        ),
+    story_page = build_story_page(
+        story_input_header=story_input_header,
+        story_framework_tab_button=story_framework_tab_button,
+        story_generation_tab_button=story_generation_tab_button,
+        story_route_hint_text=story_route_hint_text,
+        story_tab_host=story_tab_host,
+        run_meta_text=run_meta_text,
+        ui_status_text=ui_status_text,
+        event_stream_header=event_stream_header,
+        event_stream_log=event_stream_log,
+        outputs_header=outputs_header,
+        token_stream=token_stream,
+        quality_report=quality_report,
+        final_story=final_story,
+        history_header=history_header,
+        history_limit=history_limit,
+        refresh_history_button=refresh_history_button,
+        selected_run_text=selected_run_text,
+        history_log=history_log,
     )
 
-    role_page = ft.Container(
-        visible=False,
-        expand=True,
-        padding=14,
-        border_radius=14,
-        bgcolor="#ffffff",
-        border=ft.Border.all(1, "#dfe4ed"),
-        content=ft.Column(
-            [
-                role_header,
-                ft.Row([role_name_input, query_profile_button, load_role_by_name_button, add_profile_button], wrap=True),
-                ft.Row([role_id_input, memory_story_id_input, refresh_roles_button], wrap=True),
-                profile_input,
-                memory_slice_header,
-                active_memory_slice_text,
-                memory_slice_tabs,
-                memory_text_input,
-                ft.Row([delete_profile_button], wrap=True),
-                ft.Row([add_memory_button, delete_memory_button, delete_all_memory_button], wrap=True),
-                roles_list_header,
-                ft.Container(
-                    content=role_list,
-                    border=ft.Border.all(1, "#d7dce5"),
-                    padding=8,
-                    border_radius=10,
-                    expand=True,
-                ),
-            ],
-            spacing=12,
-            expand=True,
-            scroll=ft.ScrollMode.AUTO,
-        ),
+    role_page = build_role_page(
+        role_header=role_header,
+        role_name_input=role_name_input,
+        query_profile_button=query_profile_button,
+        load_role_by_name_button=load_role_by_name_button,
+        add_profile_button=add_profile_button,
+        role_id_input=role_id_input,
+        memory_story_id_input=memory_story_id_input,
+        refresh_roles_button=refresh_roles_button,
+        profile_input=profile_input,
+        memory_slice_header=memory_slice_header,
+        active_memory_slice_text=active_memory_slice_text,
+        memory_slice_tabs=memory_slice_tabs,
+        memory_text_input=memory_text_input,
+        delete_profile_button=delete_profile_button,
+        add_memory_button=add_memory_button,
+        delete_memory_button=delete_memory_button,
+        delete_all_memory_button=delete_all_memory_button,
+        roles_list_header=roles_list_header,
+        role_list=role_list,
     )
 
-    settings_base_url = ft.TextField(label="OLLAMA_BASE_URL", read_only=True)
-    settings_model_planner = ft.TextField(label="OLLAMA_MODEL_PLANNER", read_only=True)
-    settings_model_role = ft.TextField(label="OLLAMA_MODEL_ROLE", read_only=True)
-    settings_model_integrator = ft.TextField(label="OLLAMA_MODEL_INTEGRATOR", read_only=True)
-    settings_model_quality = ft.TextField(label="OLLAMA_MODEL_QUALITY", read_only=True)
+    settings_base_url = ft.TextField(label="OLLAMA_BASE_URL", width=320)
+    settings_model_planner = ft.TextField(label="OLLAMA_MODEL_PLANNER", width=260)
+    settings_model_role = ft.TextField(label="OLLAMA_MODEL_ROLE", width=260)
+    settings_model_integrator = ft.TextField(label="OLLAMA_MODEL_INTEGRATOR", width=260)
+    settings_model_quality = ft.TextField(label="OLLAMA_MODEL_QUALITY", width=260)
+    settings_model_embedding = ft.TextField(label="OLLAMA_MODEL_EMBEDDING", width=320)
+    settings_rag_enabled = ft.Dropdown(
+        label="RAG_ENABLED",
+        width=180,
+        options=[
+            ft.dropdown.Option(key="true", text="true"),
+            ft.dropdown.Option(key="false", text="false"),
+        ],
+        value="true",
+    )
+    settings_rag_top_k = ft.TextField(label="RAG_TOP_K", width=140)
+    settings_rag_chroma_dir = ft.TextField(label="RAG_CHROMA_DIR", width=320)
+    settings_rag_collection = ft.TextField(label="RAG_COLLECTION_NAME", width=320)
     settings_log_dir = ft.TextField(label="Log Directory", read_only=True)
     settings_opt_dir = ft.TextField(label="Export Directory", read_only=True)
 
-    settings_page = ft.Container(
-        visible=False,
-        expand=True,
-        padding=14,
-        border_radius=14,
-        bgcolor="#ffffff",
-        border=ft.Border.all(1, "#dfe4ed"),
-        content=ft.Column(
-            [
-                settings_header,
-                ft.Row([language_dropdown, check_button, refresh_settings_button], wrap=True),
-                health_text,
-                settings_base_url,
-                settings_model_planner,
-                settings_model_role,
-                settings_model_integrator,
-                settings_model_quality,
-                settings_log_dir,
-                settings_opt_dir,
-            ],
-            spacing=12,
-            expand=True,
-            scroll=ft.ScrollMode.AUTO,
-        ),
+    settings_page = build_settings_page(
+        settings_header=settings_header,
+        settings_runtime_header=settings_runtime_header,
+        settings_models_header=settings_models_header,
+        settings_rag_header=settings_rag_header,
+        settings_paths_header=settings_paths_header,
+        language_dropdown=language_dropdown,
+        check_button=check_button,
+        refresh_settings_button=refresh_settings_button,
+        apply_settings_button=apply_settings_button,
+        save_settings_button=save_settings_button,
+        health_text=health_text,
+        settings_base_url=settings_base_url,
+        settings_model_planner=settings_model_planner,
+        settings_model_role=settings_model_role,
+        settings_model_integrator=settings_model_integrator,
+        settings_model_quality=settings_model_quality,
+        settings_model_embedding=settings_model_embedding,
+        settings_rag_enabled=settings_rag_enabled,
+        settings_rag_top_k=settings_rag_top_k,
+        settings_rag_chroma_dir=settings_rag_chroma_dir,
+        settings_rag_collection=settings_rag_collection,
+        settings_log_dir=settings_log_dir,
+        settings_opt_dir=settings_opt_dir,
     )
 
     def switch_story_tab(target: str) -> None:
