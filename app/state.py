@@ -26,3 +26,9 @@ class StoryState(TypedDict, total=False):
     final_story: str
     run_id: int
     sqlite_db_path: str
+    rag_enabled: bool
+    rag_top_k: int
+    rag_indexed_docs: int
+    rag_role_contexts: dict[str, str]
+    chapter_timestamp: str
+    memory_slice_paths: list[str]

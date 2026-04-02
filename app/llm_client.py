@@ -12,6 +12,7 @@ from langchain_ollama import ChatOllama
 
 DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 DEFAULT_MODEL = "qwen3.5:9b"
+DEFAULT_EMBED_MODEL = "nomic-embed-text-v2-moe"
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class OllamaStoryClient:
         self.model_role = os.getenv("OLLAMA_MODEL_ROLE", DEFAULT_MODEL)
         self.model_integrator = os.getenv("OLLAMA_MODEL_INTEGRATOR", DEFAULT_MODEL)
         self.model_quality = os.getenv("OLLAMA_MODEL_QUALITY", self.model_integrator)
+        self.model_embedding = os.getenv("OLLAMA_MODEL_EMBEDDING", DEFAULT_EMBED_MODEL)
         self.temperature = float(os.getenv("OLLAMA_TEMPERATURE", "0.7"))
 
     def _list_available_models(self) -> list[str]:
@@ -42,12 +44,22 @@ class OllamaStoryClient:
                 names.append(model_name)
         return names
 
+    def _model_aliases(self, model_name: str) -> set[str]:
+        value = model_name.strip()
+        aliases = {value}
+        if value.endswith(":latest"):
+            aliases.add(value[: -len(":latest")])
+        elif ":" not in value:
+            aliases.add(f"{value}:latest")
+        return aliases
+
     def health_check(self) -> HealthCheckResult:
         required = {
             self.model_planner,
             self.model_role,
             self.model_integrator,
             self.model_quality,
+            self.model_embedding,
         }
         try:
             available_models = self._list_available_models()
@@ -62,7 +74,12 @@ class OllamaStoryClient:
         except Exception as exc:
             return HealthCheckResult(ok=False, message=f"Failed to query Ollama tags: {exc}")
 
-        missing = sorted(model for model in required if model not in available_models)
+        available_set = set(available_models)
+        missing = sorted(
+            model
+            for model in required
+            if not (self._model_aliases(model) & available_set)
+        )
         if missing:
             return HealthCheckResult(
                 ok=False,
@@ -159,6 +176,7 @@ class OllamaStoryClient:
         role_id: str,
         profile: str,
         memory: str,
+        rag_context: str,
         outline: str,
         style: str,
         token_callback: Callable[[dict], None] | None = None,
@@ -171,6 +189,7 @@ class OllamaStoryClient:
             f"Global outline:\n{outline}\n\n"
             f"Role profile:\n{profile}\n\n"
             f"Role memory:\n{memory}\n\n"
+            f"RAG memory context from same story framework:\n{rag_context or '(none)'}\n\n"
             "Output:\n"
             "1) Perspective Summary\n"
             "2) Scene Narrative (short story section)\n"

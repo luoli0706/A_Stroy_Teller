@@ -60,7 +60,7 @@ A Story Teller 是一个以 LangGraph 为核心编排框架的故事生成系统
 ### 3.2 非 MVP（后续）
 
 - 长篇多章管理。
-- 角色与世界观长期记忆。
+- 角色与世界观长期记忆。（基础版本已接入 RAG）
 - 人工反馈闭环与偏好学习。
 - Web 前端与多端分发。
 
@@ -80,9 +80,12 @@ A Story Teller 是一个以 LangGraph 为核心编排框架的故事生成系统
 - `role_profiles`: 角色设定集合（目标、秘密、关系网）
 - `role_memories`: 角色记忆索引（文档路径或内存对象）
 - `role_view_drafts`: 各角色视角草稿（map: role_id -> text）
+- `rag_role_contexts`: 各角色检索到的 RAG 上下文
 - `integrated_draft`: 主节点整合后的正文
 - `quality_report`: 质量检查结果
 - `final_story`: 最终输出
+- `chapter_timestamp`: 本次章节时间戳
+- `memory_slice_paths`: 本次写入的角色记忆切片路径
 - `metadata`: token、耗时、模型版本
 
 ### 4.2 节点职责建议
@@ -97,7 +100,7 @@ A Story Teller 是一个以 LangGraph 为核心编排框架的故事生成系统
 作用：产出全局主线与关键事件时间轴。
 
 4. `generate_role_view`
-作用：每个角色基于同一主线分别叙述自己的视角。
+作用：每个角色基于同一主线与 RAG 检索上下文分别叙述自己的视角。
 
 5. `integrate_perspectives`
 作用：主节点整合各角色叙述，消解冲突并形成统一正文。
@@ -106,11 +109,17 @@ A Story Teller 是一个以 LangGraph 为核心编排框架的故事生成系统
 作用：检查逻辑一致性、跨角色事实冲突、重复段落、安全内容。
 
 7. `finalize_output`
-作用：输出最终文本与附加信息。
+作用：输出最终文本与附加信息，并写入章节记忆切片。
+
+8. `index_role_memories_for_rag`
+作用：将角色记忆切片嵌入写入 Chroma 向量库。
+
+9. `retrieve_role_rag_contexts`
+作用：按角色检索同框架记忆切片（自身 + 其他角色）并形成提示词上下文。
 
 ### 4.3 路由与分支
 
-- 正常路径：`START -> collect_requirements -> load_role_assets -> plan_global_story -> generate_role_view(多角色) -> integrate_perspectives -> quality_check -> finalize_output -> END`
+- 正常路径：`START -> collect_requirements -> load_role_assets -> index_role_memories_for_rag -> plan_global_story -> retrieve_role_rag_contexts -> generate_role_view(多角色) -> integrate_perspectives -> quality_check -> finalize_output -> END`
 - 失败回路：当 `quality_check` 不通过时，回到 `integrate_perspectives` 或触发指定角色重写，并设置最大重试次数。
 - 可选分支：当用户指定“只要角色视角草稿”时，在 `generate_role_view` 后提前结束。
 
@@ -156,8 +165,12 @@ opt/
 说明：
 
 - `profile.md` 偏稳定，人工或工具编辑。
-- `memory/<role_id>/*.md` 为记忆切片，按故事维度管理。
+- `memory/<role_id>/*.md` 为记忆切片，按故事与章节时间戳管理。
 - 所有角色共享同一个 `global_outline`，但叙述时引用自己的记忆切片集合。
+
+章节切片推荐命名：
+
+- `<story_id>__chapter_<UTC_TIMESTAMP>_run<run_id>.md`
 
 ## 5. 技术方案建议
 
@@ -193,6 +206,7 @@ tests/
 - 已有：`langgraph`, `langchain-core`, `python-dotenv`
 - 可选补充：
   - `langchain-ollama`（本地 Ollama 模型接入）
+  - `chromadb`（向量检索）
   - `pydantic`（严格状态验证）
   - `pytest`（测试）
 
@@ -202,10 +216,15 @@ tests/
 
 - `MODEL_PROVIDER`：固定为 `ollama`
 - `OLLAMA_BASE_URL`：默认 `http://127.0.0.1:11434`
-- `OLLAMA_MODEL_*`：默认 `Qwen3.5:9b`
+- `OLLAMA_MODEL_*`：默认 `qwen3.5:9b`
+- `OLLAMA_MODEL_EMBEDDING`：默认 `nomic-embed-text-v2-moe`
 - `OLLAMA_MODEL_PLANNER`：主线规划模型名
 - `OLLAMA_MODEL_ROLE`：角色叙述模型名
 - `OLLAMA_MODEL_INTEGRATOR`：整合模型名
+- `RAG_ENABLED`：是否启用 RAG
+- `RAG_TOP_K`：每名角色检索条数
+- `RAG_CHROMA_DIR`：向量库目录
+- `RAG_COLLECTION_NAME`：向量集合名
 - `MAX_RETRY`：质量回路最大次数
 - `MAX_PARALLEL_ROLES`：角色并行上限
 - `LOG_LEVEL`：日志等级
@@ -248,9 +267,15 @@ tests/
 
 ### v0.3（增强）
 
-- 完成角色记忆文档自动更新。
+- 完成角色记忆文档自动更新。（已完成：章节时间戳切片）
 - 支持角色增删与动态路由。
 - 支持大纲模式与全文模式切换。
+
+### v0.3.5（RAG）
+
+- 增加 Chroma 向量检索。
+- 增加 Ollama embedding 接口封装。
+- 角色生成时可检索同框架下自身与其他角色记忆切片。
 
 ### v0.4（产品化）
 
@@ -269,3 +294,96 @@ tests/
 ---
 
 本蓝图用于统一产品思路与技术实现，后续可以按版本逐段细化为开发任务清单。
+
+## 9. English Summary
+
+### 9.1 Product Positioning
+
+A Story Teller is a LangGraph-based story production system that converts user inspiration into publishable narratives through traceable, iterative, and extensible workflow nodes.
+
+Core goals:
+
+- Replace one-shot black-box generation with controllable node-based creation.
+- Balance output quality and runtime stability for repeatable runs.
+- Scale to multi-style, multi-language, and multi-role pipelines.
+
+### 9.2 Feasibility Conclusion
+
+For the "local Ollama + role-centric + multi-perspective + master integration" strategy:
+
+- Technically feasible with LangGraph node orchestration.
+- Architecturally extensible for dynamic role growth.
+- Cost-effective due to local model runtime.
+- Main risks (context length, role fact conflicts, latency) can be mitigated by state compression, conflict checks, and parallel limits.
+
+### 9.3 Scope
+
+MVP includes:
+
+- Inputs: topic, style, length, audience, role list.
+- Flow: global planning -> role drafts -> integration -> quality check -> output.
+- Outputs: title, summary, per-role drafts, integrated story, continuation hook.
+
+Beyond MVP:
+
+- Multi-chapter long-form management.
+- Long-term role/world memory (base RAG support already integrated).
+- Human feedback loop and preference learning.
+- Multi-end product delivery.
+
+### 9.4 State and Node Blueprint
+
+Important state additions:
+
+- `rag_role_contexts`, `chapter_timestamp`, `memory_slice_paths`.
+
+Recommended/implemented nodes:
+
+1. `collect_requirements`
+2. `load_role_assets`
+3. `plan_global_story`
+4. `generate_role_view`
+5. `integrate_perspectives`
+6. `quality_check`
+7. `finalize_output`
+8. `index_role_memories_for_rag`
+9. `retrieve_role_rag_contexts`
+
+### 9.5 RAG and Memory Model
+
+- Role profile is static (`role/<role_id>/profile.md`).
+- Role memory is dynamic slices (`memory/<role_id>/*.md`).
+- Retrieval uses same-framework priority, then role scope fallback.
+- Generated chapter slices are persisted with timestamp naming:
+  - `<story_id>__chapter_<UTC_TIMESTAMP>_run<run_id>.md`
+
+### 9.6 Configuration and Dependencies
+
+Key dependencies:
+
+- `langgraph`, `langchain-core`, `python-dotenv`
+- `langchain-ollama`, `chromadb`, `pydantic`, `pytest`
+
+Key environment variables:
+
+- Ollama runtime: `OLLAMA_BASE_URL`, `OLLAMA_MODEL_*`
+- Embedding: `OLLAMA_MODEL_EMBEDDING=nomic-embed-text-v2-moe`
+- RAG controls: `RAG_ENABLED`, `RAG_TOP_K`, `RAG_CHROMA_DIR`, `RAG_COLLECTION_NAME`
+
+### 9.7 Quality and Evolution
+
+Quality dimensions:
+
+- Narrative completeness
+- Role and timeline consistency
+- Style adherence
+- Readability and repetition control
+- Role voice distinction
+
+Version roadmap:
+
+- v0.1 baseline
+- v0.2 local Ollama + multi-node MVP
+- v0.3 memory updates and dynamic routing
+- v0.3.5 RAG integration
+- v0.4 productization

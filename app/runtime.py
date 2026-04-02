@@ -14,11 +14,13 @@ def build_input_state(
     style: str,
     roles: list[str],
     max_retry: int,
+    rag_enabled: bool | None = None,
+    rag_top_k: int | None = None,
 ) -> StoryState:
     logger, log_file_path = create_run_logger()
     logger.info("runtime=start story_id=%s topic=%s roles=%s", story_id, topic, ",".join(roles))
 
-    return {
+    state: StoryState = {
         "logger_name": logger.name,
         "log_file_path": log_file_path,
         "story_id": story_id,
@@ -27,6 +29,13 @@ def build_input_state(
         "roles": roles,
         "max_retry": max_retry,
     }
+
+    if rag_enabled is not None:
+        state["rag_enabled"] = bool(rag_enabled)
+    if rag_top_k is not None:
+        state["rag_top_k"] = int(rag_top_k)
+
+    return state
 
 
 def _sanitize_for_json(value: Any) -> Any:

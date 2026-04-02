@@ -17,6 +17,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-retry", type=int, default=1)
     parser.add_argument(
+        "--rag-enabled",
+        choices=["true", "false"],
+        default="true",
+        help="Enable or disable RAG memory retrieval.",
+    )
+    parser.add_argument(
+        "--rag-top-k",
+        type=int,
+        default=4,
+        help="Top K retrieved memory slices per role for RAG context.",
+    )
+    parser.add_argument(
         "--stream",
         action="store_true",
         help="Output node updates as a stream (NDJSON style)",
@@ -38,6 +50,8 @@ def main() -> None:
         style=args.style,
         roles=roles,
         max_retry=args.max_retry,
+        rag_enabled=args.rag_enabled.lower() == "true",
+        rag_top_k=args.rag_top_k,
     )
 
     if args.stream:

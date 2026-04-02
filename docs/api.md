@@ -1,218 +1,143 @@
-# A Story Teller API
+# A Story Teller API / 接口说明
 
-## 1. 当前 API 形态
+## 1. 当前 API 形态 / Current API Shape
 
-当前项目以 Python 模块 API 为主（非 HTTP 服务）。
+- 中文：当前项目以 Python 模块 API 为主（非 HTTP 服务）。
+- English: The project is currently module-first (Python APIs), not an HTTP service yet.
 
-## 2. Graph API
+## 2. Graph API (`app/graph.py`)
 
-文件：`app/graph.py`
+### 2.1 `build_graph()`
 
-### 2.1 build_graph()
+- 中文：构建并返回编译后的 LangGraph。
+- English: Builds and returns the compiled LangGraph.
 
-- 说明：构建并返回编译后的 LangGraph。
-- 返回：可执行图实例。
+### 2.2 节点链路 / Node Chain
 
-### 2.2 节点调用关系
+- `collect_requirements`
+- `load_story_framework`
+- `load_roles`
+- `index_role_memories_for_rag`
+- `plan_global_story`
+- `retrieve_role_rag_contexts`
+- `generate_role_views`
+- `integrate_perspectives`
+- `quality_check`
+- `finalize_output`
 
-- `collect_requirements`：读取输入、初始化 SQLite，并执行 Ollama 启动健康检查。
-- `load_story_framework`：按 story_id 加载 stories 框架文本。
-- `load_roles`：加载角色 profile/memory 并同步入库。
-- `plan_global_story`：调用 LLM 生成主线。
-- `generate_role_views`：调用 LLM 生成多角色视角文本。
-- `integrate_perspectives`：调用 LLM 生成整合文本。
-- `quality_check`：调用 LLM 输出 PASS/FAIL 质检报告。
-- `quality_check -> generate_role_views`：当 FAIL 且未超过 max_retry 时自动重试。
-- `finalize_output`：落库运行记录并返回 run_id。
+重试回路 / Retry route:
 
-## 3. LLM API
+- 中文：`quality_check` 为 FAIL 且未超过最大重试时回到 `generate_role_views`。
+- English: On FAIL and within retry limit, routing goes back to `generate_role_views`.
 
-文件：`app/llm_client.py`
+## 3. LLM API (`app/llm_client.py`)
 
-### 3.1 get_story_client()
+### 3.1 `get_story_client()`
 
-- 返回：缓存的 `OllamaStoryClient` 单例。
+- 中文：返回缓存的 `OllamaStoryClient` 单例。
+- English: Returns cached singleton `OllamaStoryClient`.
 
-### 3.2 OllamaStoryClient.health_check()
+### 3.2 健康检查 / Health
 
-- 作用：检查 Ollama 服务可达性与配置模型是否已拉取。
+- `health_check()`：检查 Ollama 可达性及规划/角色/整合/质检/embedding 模型可用性。
+- `assert_ready()`：启动时强校验，失败抛异常。
 
-### 3.3 OllamaStoryClient.assert_ready()
+### 3.3 生成方法 / Generation Methods
 
-- 作用：在启动阶段强制校验，失败时抛出运行时错误。
+- `plan_global_story(topic, style, role_ids, framework)`
+- `generate_role_view(role_id, profile, memory, rag_context, outline, style)`
+- `integrate_perspectives(topic, style, role_drafts)`
+- `quality_check(outline, integrated_story, role_ids)`
 
-### 3.4 OllamaStoryClient.plan_global_story(topic, style, role_ids, framework)
+## 4. Role API (`app/role_memory.py`)
 
-- 作用：使用规划模型在指定故事框架约束下输出全局大纲。
+- `discover_roles(base_dir)`：发现角色目录。
+- `load_role_assets(base_dir, roles, memory_dir="memory")`：加载 profile 与聚合 memory。
+- `add_role_profile(role_id, profile_text, role_dir="role")`：新增/覆盖设定。
+- `delete_role_profile(role_id, role_dir="role")`：删除设定。
+- `add_role_memory_slice(role_id, story_id, memory_text, memory_dir="memory")`：新增/覆盖记忆切片。
+- `delete_role_memory_slice(role_id, story_id, memory_dir="memory")`：删除单条切片。
+- `delete_all_role_memories(role_id, memory_dir="memory", role_dir="role")`：删除全部切片。
 
-### 3.5 OllamaStoryClient.generate_role_view(role_id, profile, memory, outline, style)
+## 5. SQLite API (`app/sqlite_store.py`)
 
-- 作用：按角色 profile + memory 生成单角色视角叙述。
+- `init_db(db_path=DEFAULT_DB_PATH)`：初始化数据库。
+- `upsert_role_asset(role_id, profile, memory, db_path=DEFAULT_DB_PATH)`：写入角色资产快照。
+- `insert_story_run(topic, style, roles_json, integrated_draft, final_story, db_path=DEFAULT_DB_PATH)`：写入运行记录并返回 `run_id`。
 
-### 3.6 OllamaStoryClient.integrate_perspectives(topic, style, role_drafts)
+## 6. 环境变量合约 / Environment Contract
 
-- 作用：整合多角色视角为统一故事文本。
+` .env ` 为本地配置，` .env.example ` 为模板。
 
-### 3.7 OllamaStoryClient.quality_check(outline, integrated_story, role_ids)
-
-- 作用：输出质量检查报告（PASS/FAIL + 建议）。
-
-## 4. Role API
-
-文件：`app/role_memory.py`
-
-### 4.1 discover_roles(base_dir)
-
-- 输入：`base_dir`（角色根目录）
-- 返回：角色 ID 列表（仅包含存在 `profile.md` 的角色目录）
-
-### 4.2 load_role_assets(base_dir, roles, memory_dir="memory")
-
-- 输入：角色根目录、角色列表、独立记忆目录
-- 返回：角色资产映射
-  - profile: 角色设定文本
-  - memory: 角色记忆切片聚合文本
-
-### 4.3 add_role_profile(role_id, profile_text, role_dir="role")
-
-- 作用：新增或覆盖角色设定文件 `role/<role_id>/profile.md`。
-
-### 4.4 delete_role_profile(role_id, role_dir="role")
-
-- 作用：删除角色设定文件。
-
-### 4.5 add_role_memory_slice(role_id, story_id, memory_text, memory_dir="memory")
-
-- 作用：新增或覆盖单个故事记忆切片 `memory/<role_id>/<story_id>.md`。
-
-### 4.6 delete_role_memory_slice(role_id, story_id, memory_dir="memory")
-
-- 作用：删除指定故事记忆切片。
-
-### 4.7 delete_all_role_memories(role_id, memory_dir="memory", role_dir="role")
-
-- 作用：删除角色全部记忆切片，并兼容清理旧路径 `role/<role_id>/memory.md`。
-
-## 5. SQLite API
-
-文件：`app/sqlite_store.py`
-
-### 4.1 init_db(db_path=DEFAULT_DB_PATH)
-
-- 作用：初始化数据库和表结构。
-- 返回：数据库路径字符串。
-
-### 4.2 upsert_role_asset(role_id, profile, memory, db_path=DEFAULT_DB_PATH)
-
-- 作用：插入或更新角色资产到 role_assets。
-
-### 4.3 insert_story_run(topic, style, roles_json, integrated_draft, final_story, db_path=DEFAULT_DB_PATH)
-
-- 作用：写入一条故事运行记录到 story_runs。
-- 返回：新记录的 run_id。
-
-## 6. 环境变量 API 合约
-
-`.env` 为本地运行配置（已在 `.gitignore` 中忽略），`.env.example` 为提交模板。
-
-默认值：
+核心键：
 
 - `OLLAMA_BASE_URL=http://127.0.0.1:11434`
 - `OLLAMA_MODEL_PLANNER=qwen3.5:9b`
 - `OLLAMA_MODEL_ROLE=qwen3.5:9b`
 - `OLLAMA_MODEL_INTEGRATOR=qwen3.5:9b`
 - `OLLAMA_MODEL_QUALITY=qwen3.5:9b`
+- `OLLAMA_MODEL_EMBEDDING=nomic-embed-text-v2-moe`
 - `OLLAMA_TEMPERATURE=0.7`
+- `RAG_ENABLED=true`
+- `RAG_TOP_K=4`
+- `RAG_CHROMA_DIR=.data/rag_chroma`
+- `RAG_COLLECTION_NAME=story_memory_slices`
 
-## 7. 运行接口
+## 7. 运行接口 / Runtime Entry
 
-文件：`app/main.py`
-核心运行模块：`app/runtime.py`
-
-执行命令：
+主入口 / Main entry:
 
 ```bash
 python -m app.main
 ```
 
-流式执行命令：
+流式模式 / Streaming mode:
 
 ```bash
 python -m app.main --stream
 ```
 
-参数化运行示例：
+RAG 示例 / RAG example:
 
 ```bash
-python -m app.main --story-id urban_detective --topic "midnight archive theft" --style noir --roles "Reshaely,VanlyShan,SolinXuan" --max-retry 2
+python -m app.main --story-id future_academy_city --topic "campus anomaly at night" --style cinematic --roles "Reshaely,VanlyShan,SolinXuan" --rag-enabled true --rag-top-k 4
 ```
 
-参数化流式示例：
+### 7.1 Runtime API (`app/runtime.py`)
 
-```bash
-python -m app.main --story-id urban_detective --topic "midnight archive theft" --style noir --roles "Reshaely,VanlyShan,SolinXuan" --max-retry 2 --stream
-```
+- `build_input_state(...)`：支持 `rag_enabled` 与 `rag_top_k`。
+- `run_story(state)`：非流式执行。
+- `stream_story_events(state)`：流式事件输出（node + token）。
 
-输出内容：
+状态新增字段 / New state fields:
 
-- 每个角色的视角稿
-- 整合后的故事
-- SQLite 落库后的 run_id 和 db 路径
+- `rag_enabled`
+- `rag_top_k`
+- `rag_indexed_docs`
+- `rag_role_contexts`
+- `chapter_timestamp`
+- `memory_slice_paths`
 
-流式输出内容：
+### 7.2 日志与监控 / Logs & Observability
 
-- 每个节点的更新事件（JSON 行）
-- 字段包括：`event`、`node`、`keys`、`data`
+- 控制台结构化日志 / Structured console logs
+- 文件日志 `logs/run_<timestamp>.log`
+- 实现模块 `app/observability.py`
 
-输入参数可选增加：
+### 7.3 流式事件类型 / Event Types
 
-- `story_id`：故事框架标识，映射到 `stories/<story_id>/framework.md`。
-- `topic`：故事主题。
-- `style`：叙事风格。
-- `roles`：逗号分隔角色 ID 列表。
-- `max_retry`：质检失败后的最大重试次数。
-- `stream`：启用节点级流式输出（适合 UI 实时展示）。
+- `token`: LLM token chunk event
+- `node_update`: LangGraph node update event
+- `done`: stream completed
+- `error`: stream failed
 
-### 7.1 Runtime API
+## 8. 脚本 / Scripts
 
-文件：`app/runtime.py`
+- `scripts/test_role_ops.py`：角色资产接口脚本 / role-asset script
 
-- `build_input_state(...)`：构建标准化输入状态。
-- `run_story(state)`：非流式一次性执行，返回最终状态。
-- `stream_story_events(state)`：流式执行，产出节点事件 + token 事件迭代器。
+## 9. CLI 工具 / CLI Tools
 
-### 7.2 监控与日志
-
-- 控制台日志：运行时输出节点开始/结束、重试、run_id 等信息。
-- 文件日志：自动写入 `logs/run_<timestamp>.log`。
-- 关键字段：`node`、`stage`、`pid`、`retry_count`、`run_id`。
-- 实现模块：`app/observability.py`（创建运行级 logger，同时挂载 console/file handler）。
-
-### 7.3 流式事件类型
-
-- `token`：LLM token 增量事件。
-  - 字段：`event`, `node`, `model`, `role_id`, `text`
-- `node_update`：LangGraph 节点状态更新。
-  - 字段：`event`, `node`, `keys`, `data`
-- `done`：流程流式结束标记。
-- `error`：流式执行错误。
-
-## 8. 脚本
-
-脚本统一放置在 `scripts/` 文件夹。
-
-- `scripts/test_role_ops.py`
-  - 测试删除 `alice` 和 `bob` 的角色设定与记忆。
-  - 新增角色 `Reshaely`、`VanlyShan`、`SolinXuan` 的设定。
-  - 新增多故事记忆切片，写入 `memory/<role_id>/`。
-
-## 9. CLI 封装（独立文件夹）
-
-角色接口已封装为命令行工具，单独放在 `tools/` 文件夹：
-
-- `tools/role_cli.py`
-
-常用命令：
+### 9.1 Role CLI (`tools/role_cli.py`)
 
 ```bash
 python tools/role_cli.py list-roles
@@ -223,41 +148,49 @@ python tools/role_cli.py delete-memory SolinXuan case_001
 python tools/role_cli.py delete-all-memory bob
 ```
 
-## 10. 规划中的 HTTP API（建议）
+### 9.2 Embedding CLI (`tools/embedding_cli.py`)
 
-后续可在 `app/api/` 下增加 FastAPI，并暴露以下接口：
+```bash
+python tools/embedding_cli.py index --roles "Reshaely,VanlyShan,SolinXuan"
+python tools/embedding_cli.py query --story-id future_academy_city --target-role Reshaely --roles "Reshaely,VanlyShan,SolinXuan" --query "chapter timeline" --top-k 4
+```
+
+## 10. RAG API
+
+### 10.1 `app.rag.ollama_embedding`
+
+- `OllamaEmbeddingClient.embed_texts(texts)`：调用 Ollama embedding 接口（`/api/embed`，兼容 `/api/embeddings`）。
+
+### 10.2 `app.rag.chroma_memory`
+
+- `index_memory_directory(...)`：索引记忆切片到 Chroma。
+- `format_role_rag_context(...)`：检索并格式化角色 RAG 上下文。
+- `persist_generated_role_slice(...)`：写入章节时间戳记忆切片。
+
+### 10.3 章节时间戳机制 / Chapter Timestamp Mechanism
+
+- 格式 / Format: `%Y%m%dT%H%M%SZ` (UTC)
+- 文件名 / Filename: `<story_id>__chapter_<timestamp>_run<run_id>.md`
+- Header 字段 / Header fields:
+  - `Story ID`
+  - `Role ID`
+  - `Chapter Timestamp`
+  - `Run ID`
+  - `Topic`
+  - `Style`
+
+## 11. 规划中的 HTTP API / Planned HTTP APIs
+
+后续建议增加 FastAPI：
 
 - `POST /stories/generate`
-  - 输入：topic/style/roles
-  - 输出：final_story、role_view_drafts、run_id
-
 - `GET /stories/runs/{run_id}`
-  - 输出：指定运行记录
-
 - `GET /roles`
-  - 输出：角色列表及最新资产摘要
-
 - `POST /roles/{role_id}/memory`
-  - 输入：memory patch
-  - 输出：更新后的角色记忆
 
-当前版本尚未实现 HTTP API，本文件记录的是已实现模块 API 与下一步服务化方向。
+English: Future service mode can expose the same capabilities via FastAPI endpoints.
 
-## 11. Flet UI 客户端
+## 12. Flet UI (`UI/flet_app.py`)
 
-文件：`UI/flet_app.py`
-
-当前 UI 能力：
-
-- 流式生成（node_update + token + node_log）
-- 历史运行记录面板（读取 SQLite `story_runs`）
-- 角色管理面板：
-  - 支持按角色名字（英文）查询角色设定
-  - 支持按名字加载角色
-  - 角色列表支持一键加载到编辑区
-  - 记忆切片以子标签按钮展示并支持点击加载
-  - 支持角色设定增删、单条记忆切片增删、全部记忆删除
-- 一键导出到 `opt/`（markdown + json）
-- 三标签路由切换（故事管理 / 角色管理 / 设置）
-- 设置页支持中英切换（Chinese / English）
-- 三页面均支持滚动（适配长内容和小屏）
+- 中文：支持故事/角色/设置三页面、流式输出、框架与角色加载编辑、单多角色生成、中英切换与导出。
+- English: Supports Story/Roles/Settings routes, streaming output, framework/role load-edit flows, single/multi-role generation, bilingual UI, and export.
