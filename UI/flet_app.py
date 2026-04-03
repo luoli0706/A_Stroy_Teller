@@ -44,14 +44,11 @@ STRINGS = {
 async def main(page: ft.Page):
     page.title = STRINGS[DEFAULT_LANG]["app_title"]
     page.theme_mode = ft.ThemeMode.LIGHT
-    page.padding = 0 # 使用内部 Container 控制 padding
+    page.padding = 0
     page.bgcolor = "#f4f7f9"
     
     lang = DEFAULT_LANG
     def tr(key): return STRINGS[lang].get(key, key)
-
-    # --- 核心状态 ---
-    current_history_data = []
 
     # --- 初始化组件 ---
     log_viewer = LogViewer(hint_text="执行详情将在此显示...")
@@ -59,51 +56,55 @@ async def main(page: ft.Page):
     output_display = ft.Markdown(
         value="## 故事预览区域\n请在左侧点击历史快照或开始新的生成任务。",
         selectable=True,
-        extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
+        extension_set="github",
         expand=True,
     )
     
     output_container = ft.Container(
-        content=ft.Column([output_display], scroll=ft.ScrollMode.AUTO),
+        content=ft.Column([output_display], scroll="auto"),
         bgcolor="white",
         padding=20,
         border_radius=10,
         expand=True,
-        border=ft.border.all(1, "#e0e0e0")
+        border=ft.Border.all(1, "#e0e0e0")
     )
 
     async def on_snapshot_click(snapshot_data: Dict[str, Any]):
         """当点击历史快照时触发。"""
         values = snapshot_data.get("values", {})
         story_content = values.get("integrated_draft") or values.get("final_story") or ""
-        
-        # 构造预览 Markdown
         topic = values.get("topic", "未命名故事")
         outline = values.get("global_outline", "尚未生成大纲")
         
         md_text = f"# {topic}\n\n"
-        
         if story_content:
             md_text += f"## 整合正文\n\n{story_content}\n\n"
-        
         md_text += f"## 全局大纲\n\n{outline}\n\n"
         
         if "role_story_identities" in values:
             md_text += "## 角色扮演分配\n"
             for rid, identity in values["role_story_identities"].items():
-                name = identity.get("story_name", rid)
-                goal = identity.get("story_specific_goal", "N/A")
-                md_text += f"- **{rid}** 扮演 **{name}**: {goal}\n"
+                if isinstance(identity, dict):
+                    name = identity.get("story_name", rid)
+                    goal = identity.get("story_specific_goal", "N/A")
+                    md_text += f"- **{rid}** 扮演 **{name}**: {goal}\n"
+                else:
+                    md_text += f"- **{rid}** 身份已分配\n"
 
         output_display.value = md_text
-        page.update()
+        if output_display.page:
+            output_display.update()
 
     history_panel = HistoryPanel(on_snapshot_click=on_snapshot_click)
 
     async def refresh_history():
-        thread_id = story_panel.thread_id_input.value
-        history = await get_thread_history_async(thread_id)
-        await history_panel.update_history(history)
+        try:
+            thread_id = story_panel.thread_id_input.value
+            history = await get_thread_history_async(thread_id)
+            await history_panel.update_history(history)
+        except Exception as e:
+            if log_viewer.page:
+                log_viewer.add_log(f"⚠ 无法加载历史记录: {str(e)}", color="orange")
 
     async def on_run_click(e):
         values = story_panel.get_values()
@@ -129,7 +130,6 @@ async def main(page: ft.Page):
                 if etype == "node_update":
                     node = event.get("node")
                     log_viewer.add_log(f"✅ Node [{node}] completed & checkpointed", color="green")
-                    # 每次节点完成都刷新历史
                     await refresh_history()
                 elif etype == "error":
                     log_viewer.add_log(f"❌ Error: {event.get('message')}", color="red")
@@ -146,42 +146,38 @@ async def main(page: ft.Page):
 
     # --- 顶栏 ---
     app_bar = ft.AppBar(
-        leading=ft.Icon(ft.icons.AUTO_STORIES, color="white"),
+        leading=ft.Icon("auto_stories", color="white"), # 修复：直接传字符串
         title=ft.Text(tr("app_title"), weight="bold", color="white"),
-        bgcolor=ft.colors.BLUE_GREY_900,
+        bgcolor="#263238",
         center_title=False,
         actions=[
-            ft.IconButton(ft.icons.REFRESH, on_click=lambda _: refresh_history(), tooltip=tr("btn_refresh_history"), icon_color="white")
+            ft.IconButton(icon="refresh", on_click=lambda _: refresh_history(), tooltip=tr("btn_refresh_history"), icon_color="white") # 修复：明确 icon 参数
         ]
     )
 
-    # --- 整体布局 ---
     main_layout = ft.Row(
         [
-            # 左侧：控制与日志
             ft.Container(
                 content=ft.Column([
                     story_panel.build(),
                     ft.Divider(),
                     ft.Text("实时状态日志", size=14, weight="w600"),
                     log_viewer,
-                ], scroll=ft.ScrollMode.AUTO),
+                ], scroll="auto"),
                 width=400,
                 padding=20,
                 bgcolor="white",
                 border_radius=10,
-                border=ft.border.all(1, "#e0e0e0")
+                border=ft.Border.all(1, "#e0e0e0")
             ),
-            # 中间：历史快照
             ft.Container(
                 content=history_panel,
                 width=280,
                 padding=15,
                 bgcolor="white",
                 border_radius=10,
-                border=ft.border.all(1, "#e0e0e0")
+                border=ft.Border.all(1, "#e0e0e0")
             ),
-            # 右侧：预览区
             output_container
         ],
         expand=True,
@@ -193,8 +189,7 @@ async def main(page: ft.Page):
         ft.Container(main_layout, padding=20, expand=True)
     )
     
-    # 初始刷新历史
     await refresh_history()
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    ft.run(main)

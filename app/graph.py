@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, Any, List
 
 from langgraph.graph import END, START, StateGraph
-from langgraph.checkpoint.sqlite import SqliteSaver # [v0.2.4] 引入持久化 Checkpointer
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from app.config import (
     ROLE_DIR, MEMORY_DIR, STORIES_DIR, SQLITE_DB_PATH, 
@@ -23,13 +23,12 @@ from app.rag.chroma_memory import (
 from app.role_memory import discover_roles, load_role_assets
 from app.sqlite_store import init_db, insert_story_run, upsert_role_asset
 from app.state import StoryState, RoleStoryIdentity, QualityReport
-
-
-def _get_logger(state: StoryState) -> logging.Logger:
-    return logging.getLogger(state.logger_name)
+from app.observability import log_event
 
 
 def _emit_event(state: StoryState, event: dict) -> None:
+    # 注意：在 astream_events 模式下，系统会自动捕获 token，
+    # 但我们仍保留这个用于兼容旧逻辑或自定义事件。
     if state.event_callback:
         state.event_callback(event)
 
@@ -38,12 +37,12 @@ async def robust_task(coro, role_id: str, node_name: str, state: StoryState):
     try:
         return await coro
     except Exception as e:
-        _get_logger(state).error(f"Error in {node_name} for {role_id}: {str(e)}")
-        _emit_event(state, {"event": "error", "node": node_name, "role_id": role_id, "message": str(e)})
+        log_event(state.logger_name, f"Error in {node_name} for {role_id}: {str(e)}", logging.ERROR)
         return f"ERROR: Failed to execute {node_name}. {str(e)}"
 
 
 async def collect_requirements(state: StoryState) -> Dict[str, Any]:
+    log_event(state.logger_name, f"Node Start: collect_requirements | Topic: {state.topic}")
     init_db(str(SQLITE_DB_PATH))
     get_story_client().assert_ready()
     roles = state.roles if state.roles else discover_roles(str(ROLE_DIR))
@@ -56,12 +55,14 @@ async def collect_requirements(state: StoryState) -> Dict[str, Any]:
 
 
 async def load_story_framework_node(state: StoryState) -> Dict[str, Any]:
+    log_event(state.logger_name, f"Node Start: load_story_framework | ID: {state.story_id}")
     from app.story_framework import load_story_framework
     story_id, framework = load_story_framework(state.story_id, str(STORIES_DIR))
     return {"story_id": story_id, "story_framework": framework}
 
 
 async def load_roles(state: StoryState) -> Dict[str, Any]:
+    log_event(state.logger_name, f"Node Start: load_roles | Roles: {state.roles}")
     assets = load_role_assets(str(ROLE_DIR), state.roles, memory_dir=str(MEMORY_DIR))
     for rid, asset in assets.items():
         upsert_role_asset(rid, asset.get("profile", ""), asset.get("memory", ""), str(SQLITE_DB_PATH))
@@ -69,14 +70,16 @@ async def load_roles(state: StoryState) -> Dict[str, Any]:
 
 
 async def index_role_memories_for_rag(state: StoryState) -> Dict[str, Any]:
+    log_event(state.logger_name, "Node Start: index_role_memories_for_rag")
     if not state.rag_enabled:
         return {"rag_indexed_docs": 0}
     indexed = index_memory_directory(roles=state.roles)
-    _emit_event(state, {"event": "node_log", "node": "index", "message": f"RAG Incremental Indexed: {indexed}"})
+    log_event(state.logger_name, f"RAG Incremental Indexed: {indexed} documents")
     return {"rag_indexed_docs": indexed}
 
 
 async def map_roles_to_slots(state: StoryState) -> Dict[str, Any]:
+    log_event(state.logger_name, "Node Start: map_roles_to_slots")
     client = get_story_client()
     profiles = {rid: asset.get("profile", "") for rid, asset in state.role_assets.items()}
     mapping_raw = await client.map_roles_to_slots_async(state.roles, profiles, state.story_framework)
@@ -84,23 +87,27 @@ async def map_roles_to_slots(state: StoryState) -> Dict[str, Any]:
         mapping = json.loads(mapping_raw)
     except:
         mapping = {rid: "Generic Role" for rid in state.roles}
+    log_event(state.logger_name, f"Role Mapping Result: {mapping}")
     return {"role_mapping": mapping}
 
 
 async def plan_global_story(state: StoryState) -> Dict[str, Any]:
+    log_event(state.logger_name, "Node Start: plan_global_story (LLM Planning...)")
     client = get_story_client()
     outline = await client.plan_global_story_async(
         state.topic, state.style, state.role_mapping, state.story_framework, state.event_callback
     )
+    log_event(state.logger_name, "Global Outline generated successfully.")
     return {"global_outline": outline}
 
 
 async def wait_for_user_outline(state: StoryState) -> StoryState:
-    _emit_event(state, {"event": "node_log", "node": "wait_for_user_outline", "message": "Breakpoint reached. Checkpoint saved."})
+    log_event(state.logger_name, "Node: wait_for_user_outline (Checkpoint saved)")
     return state
 
 
 async def adapt_roles_to_framework(state: StoryState) -> Dict[str, Any]:
+    log_event(state.logger_name, "Node Start: adapt_roles_to_framework")
     client = get_story_client()
     tasks = []
     for rid in state.roles:
@@ -116,11 +123,14 @@ async def adapt_roles_to_framework(state: StoryState) -> Dict[str, Any]:
             identities[rid] = RoleStoryIdentity.parse_raw(res)
         except:
             identities[rid] = RoleStoryIdentity(story_name=rid, story_personality_manifestation="As usual", story_specific_goal="Explore")
+    
     rel_matrix = await client.generate_relationships_async(state.roles, {r: i.json() for r, i in identities.items()})
+    log_event(state.logger_name, "Role identities adapted and relationship matrix generated.")
     return {"role_story_identities": identities, "relationship_matrix": rel_matrix}
 
 
 async def retrieve_role_rag_contexts(state: StoryState) -> Dict[str, Any]:
+    log_event(state.logger_name, "Node Start: retrieve_role_rag_contexts")
     if not state.rag_enabled:
         return {"rag_role_contexts": {}}
     tasks = [format_role_rag_context_async(state.story_id, rid, state.roles, f"Topic: {state.topic}", state.rag_top_k) for rid in state.roles]
@@ -129,6 +139,7 @@ async def retrieve_role_rag_contexts(state: StoryState) -> Dict[str, Any]:
 
 
 async def generate_role_views(state: StoryState) -> Dict[str, Any]:
+    log_event(state.logger_name, "Node Start: generate_role_views (Parallel LLM Generation...)")
     client = get_story_client()
     tasks = []
     for rid in state.roles:
@@ -143,16 +154,19 @@ async def generate_role_views(state: StoryState) -> Dict[str, Any]:
             rid, "generate_role_views", state
         ))
     results = await asyncio.gather(*tasks)
+    log_event(state.logger_name, "All role views generated.")
     return {"role_view_drafts": dict(zip(state.roles, results))}
 
 
 async def integrate_perspectives(state: StoryState) -> Dict[str, Any]:
+    log_event(state.logger_name, "Node Start: integrate_perspectives")
     client = get_story_client()
     integrated = await client.integrate_perspectives_async(state.topic, state.style, state.role_view_drafts, state.event_callback)
     return {"integrated_draft": integrated}
 
 
 async def quality_check(state: StoryState) -> Dict[str, Any]:
+    log_event(state.logger_name, "Node Start: quality_check")
     client = get_story_client()
     report_raw = await client.quality_check_async(state.global_outline, state.integrated_draft, state.roles, state.event_callback)
     try:
@@ -160,6 +174,7 @@ async def quality_check(state: StoryState) -> Dict[str, Any]:
     except:
         report = QualityReport(status="FAIL", conflicts=["Invalid JSON from QA"])
     new_retry = state.retry_count + (1 if report.status == "FAIL" else 0)
+    log_event(state.logger_name, f"Quality Report: {report.status} (Score: {report.score})")
     return {"quality_report": report, "retry_count": new_retry}
 
 
@@ -170,26 +185,38 @@ def route_after_quality(state: StoryState) -> str:
 
 
 async def finalize_output(state: StoryState) -> Dict[str, Any]:
-    run_id = insert_story_run(state.topic, state.style, json.dumps(state.roles), state.integrated_draft, state.integrated_draft, str(SQLITE_DB_PATH))
+    log_event(state.logger_name, "Node Start: finalize_output (Persisting Results...)")
+    final_story = state.integrated_draft
+    run_id = insert_story_run(state.topic, state.style, json.dumps(state.roles), final_story, final_story, str(SQLITE_DB_PATH))
+    
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     paths = []
     for rid, content in state.role_view_drafts.items():
         p = persist_generated_role_slice(rid, state.story_id, run_id, ts, state.topic, state.style, content)
         paths.append(str(p))
-    return {"final_story": state.integrated_draft, "run_id": run_id, "memory_slice_paths": paths}
+    
+    # 强制写入 OPT 目录
+    story_opt_dir = OPT_STORIES_DIR / state.story_id
+    story_opt_dir.mkdir(parents=True, exist_ok=True)
+    out_file = story_opt_dir / f"final_run_{run_id}.md"
+    out_file.write_text(f"# {state.topic}\n\n{final_story}", encoding="utf-8")
+    
+    log_event(state.logger_name, f"Final story saved to: {out_file}")
+    return {"final_story": final_story, "run_id": run_id, "memory_slice_paths": paths}
 
 
 async def distill_memories(state: StoryState) -> Dict[str, Any]:
+    log_event(state.logger_name, "Node Start: distill_memories")
     for rid, content in state.role_view_drafts.items():
         summary_path = MEMORY_DIR / rid / f"{rid}_summary.md"
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         with open(summary_path, "a", encoding="utf-8") as f:
             f.write(f"\n\n### Chapter Run {state.run_id} ({datetime.now().isoformat()})\n{content.strip()}\n")
+    log_event(state.logger_name, "Memory distillation complete.")
     return {}
 
 
-def build_graph(checkpoint_db_path: str = str(SQLITE_DB_PATH)):
-    """[v0.2.4] 构造支持持久化的图。"""
+def build_graph(checkpointer: Any = None):
     graph = StateGraph(StoryState)
     
     nodes = [
@@ -230,9 +257,4 @@ def build_graph(checkpoint_db_path: str = str(SQLITE_DB_PATH)):
     graph.add_edge("finalize_output", "distill_memories")
     graph.add_edge("distill_memories", END)
 
-    # 接入 Checkpointer
-    # 注意：在真实的 LangGraph 版本中通常使用 AsyncSqliteSaver
-    # 这里我们创建一个基于文件的同步持久化层以供 Alpha 演示
-    conn = sqlite3.connect(checkpoint_db_path, check_same_thread=False)
-    memory = SqliteSaver(conn)
-    return graph.compile(checkpointer=memory)
+    return graph.compile(checkpointer=checkpointer)

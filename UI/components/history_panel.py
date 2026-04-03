@@ -25,18 +25,17 @@ class HistoryPanel(ft.Column):
             self.snapshots_list.controls.append(ft.Text("暂无历史记录", size=12, color="grey"))
         else:
             for idx, item in enumerate(history):
-                # 提取元数据信息
                 node_name = item.get("metadata", {}).get("source", "unknown")
                 created_at = item.get("created_at", "N/A")
                 
-                # 创建点击条目
                 tile = ft.ListTile(
                     title=ft.Text(f"Step {len(history)-idx}: {node_name}", size=13, weight="w500"),
                     subtitle=ft.Text(f"{created_at}", size=11),
                     on_click=lambda e, data=item: self.on_snapshot_click(data),
-                    hover_color=ft.colors.BLACK12,
+                    hover_color="#1a000000", # 使用十六进制透明度颜色
                     dense=True
                 )
                 self.snapshots_list.controls.append(tile)
         
-        self.update()
+        if self.page:
+            self.update()

@@ -1,13 +1,15 @@
 # 代码更新历史 (Code History)
 
-## [v0.1.0-alpha.2.5] - 2026-04-02
+## [v0.1.0-alpha.2.5] - 2026-04-03 (Patch 1)
+### 后端内核加固 (Backend Hardening)
+- **异步持久化升级**：完成从同步 `SqliteSaver` 到 `AsyncSqliteSaver` 的迁移，完美适配全链路 `async/await` 架构。
+- **原生事件流捕获**：弃用手动回调，接入 `astream_events(v2)` 实时抓取全链路 Token 与节点状态，彻底解决“伪停滞”问题。
+- **数据库连接治理**：重构 `sqlite_store.py` 引入显式连接关闭逻辑，消除了异步高并发下的 `ResourceWarning` 资源泄露。
+- **日志强制落盘**：优化 `observability.py` 增加 `flush()` 机制，确保在程序异常中断时，`.log` 文件仍能保留关键追溯信息。
+
 ### 持久化可视化 (Persistence Visualization)
 - **状态历史 API**：在 `runtime.py` 中新增 `get_thread_history_async`，利用 LangGraph 接口回溯持久化的 `StoryState` 快照。
-- **UI 组件化增强**：新增 `HistoryPanel` 组件，支持异步加载并渲染 Checkpoint 列表。
-- **Markdown 集成**：预览区域引入 `ft.Markdown` 组件，支持渲染带有层级标题、加粗和列表的故事正文。
-
-### UI 布局重构
-- **三栏式交互设计**：重新设计了主界面，分为“控制与日志”、“历史快照”和“Markdown 预览”三个功能区，大幅提升了操作流的清晰度。
+- **UI 框架适配**：针对 Flet 0.80+ 进行了全字符串化的兼容性重构（图标、颜色、弃用 API）。
 
 ---
 

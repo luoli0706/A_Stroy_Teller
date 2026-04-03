@@ -12,7 +12,6 @@ class StoryControlPanel(ft.Column):
         self.on_run_click = on_run_click
         self.tr = tr
 
-        # 新增 Thread ID 字段用于断点续写
         self.thread_id_input = ft.TextField(
             label="会话 ID (Thread ID)", 
             value="session_001", 
@@ -30,7 +29,7 @@ class StoryControlPanel(ft.Column):
         self.run_button = ft.ElevatedButton(
             tr("btn_run"), 
             on_click=self.on_run_click, 
-            icon=ft.icons.PLAY_ARROW
+            icon="play_circle_filled_rounded" # 改用字符串形式，避开 AttributeError
         )
 
     def build(self):
@@ -45,12 +44,14 @@ class StoryControlPanel(ft.Column):
     def set_status(self, text: str, color: str = "blue"):
         self.status_text.value = text
         self.status_text.color = color
-        self.update()
+        if self.page:
+            self.update()
 
     def set_busy(self, busy: bool):
         self.progress_ring.visible = busy
         self.run_button.disabled = busy
-        self.update()
+        if self.page:
+            self.update()
 
     def get_values(self):
         return {
