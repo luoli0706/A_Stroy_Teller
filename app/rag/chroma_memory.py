@@ -2,6 +2,7 @@ import os
 import asyncio
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Optional
@@ -171,6 +172,136 @@ async def format_role_rag_context_async(
         f"RAG Context for {target_role_id} (Story: {story_key}):\n\n"
         + "\n\n".join(parts)
     )
+
+# ── [v0.3] 既定事实 RAG ────────────────────────────────────────────────────────
+
+# 既定事实与世界观使用独立的 doc_type 标记，与角色记忆切片共存于同一集合
+_FACTS_DOC_TYPE = "established_facts"
+_WORLD_DOC_TYPE = "world_bible"
+
+
+def index_established_facts(
+    story_id: str,
+    run_id: int,
+    facts_text: str,
+    world_bible: str = "",
+) -> int:
+    """[v0.3] 将既定事实时间线和世界观设定索引到向量库。
+
+    目的：角色视角生成时通过 RAG 检索这些内容作为客观锚点，
+    而非依赖其他角色尚未完成的叙事切片，从根本上避免循环引用和逻辑矛盾。
+
+    返回实际写入的文档数量。
+    """
+    story_key = _normalize_story_id(story_id)
+    collection = _get_collection()
+    embedder = OllamaEmbeddingClient()
+
+    to_upsert_ids: list[str] = []
+    to_upsert_texts: list[str] = []
+    to_upsert_metas: list[dict] = []
+
+    def _maybe_add(doc_id: str, text: str, doc_type: str) -> None:
+        if not text.strip():
+            return
+        content_hash = _compute_hash(text)
+        # 检查既有哈希，跳过未变更内容
+        try:
+            existing = collection.get(ids=[doc_id], include=["metadatas"])
+            existing_metas = existing.get("metadatas") or []
+            if existing_metas and existing_metas[0].get("content_hash") == content_hash:
+                return
+        except Exception:
+            pass
+        to_upsert_ids.append(doc_id)
+        to_upsert_texts.append(text)
+        to_upsert_metas.append({
+            "story_id": story_key,
+            "doc_type": doc_type,
+            "source_role": "__facts__",
+            "slice_id": doc_id,
+            "chapter_timestamp": "facts",
+            "run_id": str(run_id),
+            "content_hash": content_hash,
+        })
+
+    _maybe_add(f"{story_key}__facts_run{run_id}", facts_text, _FACTS_DOC_TYPE)
+    if world_bible:
+        _maybe_add(f"{story_key}__world_run{run_id}", world_bible, _WORLD_DOC_TYPE)
+
+    if not to_upsert_ids:
+        return 0
+
+    embeddings = embedder.embed_texts(to_upsert_texts)
+    collection.upsert(
+        ids=to_upsert_ids,
+        documents=to_upsert_texts,
+        metadatas=to_upsert_metas,
+        embeddings=embeddings,
+    )
+    return len(to_upsert_ids)
+
+
+async def format_facts_rag_context_async(
+    story_id: str,
+    target_role_id: str,
+    query_text: str,
+    top_k: int | None = None,
+) -> str:
+    """[v0.3] 从既定事实和世界观向量库中检索与角色生成相关的上下文。
+
+    与 format_role_rag_context_async 的区别：
+    - 仅检索 doc_type 为 established_facts 或 world_bible 的文档。
+    - 保证角色视角生成时参照的是客观事实，而非其他角色可能存在偏差的叙事。
+    """
+    collection = _get_collection()
+    top_k = top_k or RAG_TOP_K
+    story_key = _normalize_story_id(story_id)
+
+    embedder = OllamaEmbeddingClient()
+    query_embeddings = embedder.embed_texts([query_text])
+    if not query_embeddings:
+        return ""
+
+    # 先查既定事实，再查世界观，合并结果
+    results_facts = collection.query(
+        query_embeddings=query_embeddings,
+        n_results=math.ceil(top_k / 2),
+        where={"$and": [{"story_id": story_key}, {"doc_type": _FACTS_DOC_TYPE}]},
+        include=["documents", "metadatas", "distances"],
+    )
+    results_world = collection.query(
+        query_embeddings=query_embeddings,
+        n_results=max(1, top_k // 2),
+        where={"$and": [{"story_id": story_key}, {"doc_type": _WORLD_DOC_TYPE}]},
+        include=["documents", "metadatas", "distances"],
+    )
+
+    combined_docs: list[str] = []
+    combined_metas: list[dict] = []
+    combined_dists: list[float] = []
+    for results in (results_facts, results_world):
+        combined_docs.extend(results.get("documents", [[]])[0])
+        combined_metas.extend(results.get("metadatas", [[]])[0])
+        combined_dists.extend(results.get("distances", [[]])[0])
+
+    if not combined_docs:
+        return ""
+
+    parts = []
+    for idx, (doc, meta, dist) in enumerate(zip(combined_docs, combined_metas, combined_dists), 1):
+        score = 1.0 - dist if dist < 1.0 else 0.0
+        doc_type_label = "Established Facts" if meta.get("doc_type") == _FACTS_DOC_TYPE else "World Bible"
+        parts.append(
+            f"[{doc_type_label} {idx}] score={score:.4f}\n"
+            f"{doc.strip()}"
+        )
+
+    return (
+        f"Established Facts & World Bible for {target_role_id} (Story: {story_key}):\n\n"
+        + "\n\n".join(parts)
+    )
+
 
 def persist_generated_role_slice(
     role_id: str,

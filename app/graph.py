@@ -17,7 +17,9 @@ from app.config import (
 from app.llm_client import get_story_client
 from app.rag.chroma_memory import (
     format_role_rag_context_async,
+    format_facts_rag_context_async,
     index_memory_directory,
+    index_established_facts,
     persist_generated_role_slice,
 )
 from app.role_memory import discover_roles, load_role_assets
@@ -101,6 +103,61 @@ async def plan_global_story(state: StoryState) -> Dict[str, Any]:
     return {"global_outline": outline}
 
 
+async def generate_established_facts(state: StoryState) -> Dict[str, Any]:
+    """[v0.3] 从全局大纲提炼既定事实时间线与世界观设定。
+
+    这是新策略的核心节点：产出两类权威内容——
+    1. established_facts：按时间线排列的客观事件，所有角色视角必须与之相符。
+    2. world_bible：世界观/背景设定，从框架和大纲中提炼，供 RAG 检索使用。
+    """
+    log_event(state.logger_name, "Node Start: generate_established_facts (Extracting story ground truth...)")
+    client = get_story_client()
+    raw = await client.generate_established_facts_async(
+        state.topic, state.style, state.global_outline, state.role_mapping, state.event_callback
+    )
+
+    # 将 LLM 输出切分为 established_facts 和 world_bible 两段
+    facts_marker = "## ESTABLISHED FACTS"
+    world_marker = "## WORLD BIBLE"
+    facts_text = ""
+    world_text = ""
+
+    upper = raw.upper()
+    facts_start = upper.find("ESTABLISHED FACTS")
+    world_start = upper.find("WORLD BIBLE")
+
+    if facts_start != -1 and world_start != -1:
+        if facts_start < world_start:
+            facts_text = raw[facts_start:world_start].strip()
+            world_text = raw[world_start:].strip()
+        else:
+            world_text = raw[world_start:facts_start].strip()
+            facts_text = raw[facts_start:].strip()
+    else:
+        # 无法识别分隔标记时，将全文作为 established_facts
+        facts_text = raw.strip()
+
+    log_event(state.logger_name, f"Established facts extracted ({len(facts_text)} chars), world bible ({len(world_text)} chars).")
+    return {"established_facts": facts_text, "world_bible": world_text}
+
+
+async def index_facts_for_rag(state: StoryState) -> Dict[str, Any]:
+    """[v0.3] 将既定事实和世界观索引到向量库，供角色视角生成时检索。
+
+    取代了「各角色在生成时 RAG 其他角色记忆切片」的旧策略，
+    从根本上消除循环依赖：各角色统一从客观事实中取得上下文。
+    """
+    log_event(state.logger_name, "Node Start: index_facts_for_rag")
+    if not state.rag_enabled or not state.established_facts:
+        return {"rag_facts_indexed": 0}
+    run_id = state.run_id or 0
+    count = index_established_facts(
+        state.story_id, run_id, state.established_facts, state.world_bible
+    )
+    log_event(state.logger_name, f"Facts RAG Indexed: {count} documents")
+    return {"rag_facts_indexed": count}
+
+
 async def wait_for_user_outline(state: StoryState) -> StoryState:
     log_event(state.logger_name, "Node: wait_for_user_outline (Checkpoint saved)")
     return state
@@ -130,10 +187,32 @@ async def adapt_roles_to_framework(state: StoryState) -> Dict[str, Any]:
 
 
 async def retrieve_role_rag_contexts(state: StoryState) -> Dict[str, Any]:
+    """[v0.3] 为每个角色检索 RAG 上下文。
+
+    新策略：优先从既定事实和世界观（format_facts_rag_context_async）检索，
+    而非从其他角色的记忆切片检索，确保各角色视角生成的基础是客观事实而非
+    其他角色可能尚未完成或存在主观偏差的叙事片段。
+    若既定事实尚未索引（如首次运行或 RAG 禁用），则回退到旧的角色记忆检索。
+    """
     log_event(state.logger_name, "Node Start: retrieve_role_rag_contexts")
     if not state.rag_enabled:
         return {"rag_role_contexts": {}}
-    tasks = [format_role_rag_context_async(state.story_id, rid, state.roles, f"Topic: {state.topic}", state.rag_top_k) for rid in state.roles]
+
+    query_text = f"Topic: {state.topic}"
+
+    if state.established_facts:
+        # [v0.3] 主路径：从既定事实和世界观检索
+        tasks = [
+            format_facts_rag_context_async(state.story_id, rid, query_text, state.rag_top_k)
+            for rid in state.roles
+        ]
+    else:
+        # 回退路径：兼容旧版，从角色记忆切片检索
+        tasks = [
+            format_role_rag_context_async(state.story_id, rid, state.roles, query_text, state.rag_top_k)
+            for rid in state.roles
+        ]
+
     results = await asyncio.gather(*tasks)
     return {"rag_role_contexts": dict(zip(state.roles, results))}
 
@@ -159,10 +238,20 @@ async def generate_role_views(state: StoryState) -> Dict[str, Any]:
 
 
 async def integrate_perspectives(state: StoryState) -> Dict[str, Any]:
+    """[v0.3] 整合多角色叙事。
+
+    新策略：若存在既定事实，则调用 integrate_by_chapters_async 按章节整合，
+    利用既定事实作为各章节的锚点，分批次发送给 LLM，有效化解上下文窗口压力。
+    """
     log_event(state.logger_name, "Node Start: integrate_perspectives")
     client = get_story_client()
-    integrated = await client.integrate_perspectives_async(state.topic, state.style, state.role_view_drafts, state.event_callback)
-    return {"integrated_draft": integrated}
+    integrated = await client.integrate_perspectives_async(
+        state.topic, state.style, state.role_view_drafts, state.event_callback,
+        established_facts=state.established_facts,
+    )
+    # 将章节列表存入 story_chapters（按 ## Chapter N 分割）
+    chapters = [c.strip() for c in integrated.split("\n\n## Chapter ") if c.strip()]
+    return {"integrated_draft": integrated, "story_chapters": chapters}
 
 
 async def quality_check(state: StoryState) -> Dict[str, Any]:
@@ -226,6 +315,10 @@ def build_graph(checkpointer: Any = None):
         ("index_role_memories_for_rag", index_role_memories_for_rag),
         ("map_roles_to_slots", map_roles_to_slots),
         ("plan_global_story", plan_global_story),
+        # [v0.3] 新增：从大纲提炼既定事实时间线与世界观
+        ("generate_established_facts", generate_established_facts),
+        # [v0.3] 新增：将既定事实索引到向量库，供角色视角生成时检索
+        ("index_facts_for_rag", index_facts_for_rag),
         ("wait_for_user_outline", wait_for_user_outline),
         ("adapt_roles_to_framework", adapt_roles_to_framework),
         ("retrieve_role_rag_contexts", retrieve_role_rag_contexts),
@@ -244,7 +337,10 @@ def build_graph(checkpointer: Any = None):
     graph.add_edge("load_roles", "index_role_memories_for_rag")
     graph.add_edge("index_role_memories_for_rag", "map_roles_to_slots")
     graph.add_edge("map_roles_to_slots", "plan_global_story")
-    graph.add_edge("plan_global_story", "wait_for_user_outline")
+    # [v0.3] plan_global_story -> generate_established_facts -> index_facts_for_rag -> wait_for_user_outline
+    graph.add_edge("plan_global_story", "generate_established_facts")
+    graph.add_edge("generate_established_facts", "index_facts_for_rag")
+    graph.add_edge("index_facts_for_rag", "wait_for_user_outline")
     graph.add_edge("wait_for_user_outline", "adapt_roles_to_framework")
     graph.add_edge("adapt_roles_to_framework", "retrieve_role_rag_contexts")
     graph.add_edge("retrieve_role_rag_contexts", "generate_role_views")
