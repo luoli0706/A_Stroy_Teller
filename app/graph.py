@@ -190,19 +190,24 @@ async def finalize_output(state: StoryState) -> Dict[str, Any]:
     run_id = insert_story_run(state.topic, state.style, json.dumps(state.roles), final_story, final_story, str(SQLITE_DB_PATH))
     
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    paths = []
+    role_story_paths = {}
     for rid, content in state.role_view_drafts.items():
         p = persist_generated_role_slice(rid, state.story_id, run_id, ts, state.topic, state.style, content)
-        paths.append(str(p))
+        role_story_paths[rid] = str(p)
     
-    # 强制写入 OPT 目录
-    story_opt_dir = OPT_STORIES_DIR / state.story_id
+    story_opt_dir = OPT_STORIES_DIR / state.story_id / "final"
     story_opt_dir.mkdir(parents=True, exist_ok=True)
     out_file = story_opt_dir / f"final_run_{run_id}.md"
     out_file.write_text(f"# {state.topic}\n\n{final_story}", encoding="utf-8")
     
     log_event(state.logger_name, f"Final story saved to: {out_file}")
-    return {"final_story": final_story, "run_id": run_id, "memory_slice_paths": paths}
+    return {
+        "final_story": final_story,
+        "run_id": run_id,
+        "final_story_path": str(out_file),
+        "role_story_paths": role_story_paths,
+        "memory_slice_paths": list(role_story_paths.values()),
+    }
 
 
 async def distill_memories(state: StoryState) -> Dict[str, Any]:

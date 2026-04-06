@@ -48,6 +48,8 @@ class StoryState(BaseModel):
     quality_report: Optional[QualityReport] = None
     final_story: str = ""
     run_id: Optional[int] = None
+    final_story_path: str = ""
+    role_story_paths: Dict[str, str] = {}
     memory_slice_paths: List[str] = []
 
     # --- 系统/观测 ---

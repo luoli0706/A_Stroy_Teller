@@ -9,6 +9,7 @@ from typing import Any, List, Optional
 import chromadb
 from app.config import (
     CHROMA_DIR,
+    OPT_STORIES_DIR,
     RAG_COLLECTION_NAME,
     MEMORY_DIR,
     RAG_TOP_K,
@@ -79,6 +80,16 @@ def _get_collection():
     return client.get_or_create_collection(name=RAG_COLLECTION_NAME)
 
 
+def _reset_collection():
+    CHROMA_DIR.mkdir(parents=True, exist_ok=True)
+    client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+    try:
+        client.delete_collection(name=RAG_COLLECTION_NAME)
+    except Exception:
+        pass
+    return client.get_or_create_collection(name=RAG_COLLECTION_NAME)
+
+
 def index_memory_directory(roles: list[str]) -> int:
     """[v0.2.3] 增量构建向量索引。仅对 Hash 变更的文件进行 Upsert。"""
     all_docs = load_memory_documents(roles)
@@ -106,26 +117,45 @@ def index_memory_directory(roles: list[str]) -> int:
     if not to_update:
         return 0
 
+    def _payload(items: list[MemoryDocument]) -> tuple[list[str], list[str], list[dict[str, str]]]:
+        ids_local = [d.doc_id for d in items]
+        texts_local = [d.text for d in items]
+        metas_local = [{
+            "source_role": d.source_role,
+            "story_id": d.story_id,
+            "slice_id": d.slice_id,
+            "chapter_timestamp": d.chapter_timestamp,
+            "content_hash": d.content_hash,
+        } for d in items]
+        return ids_local, texts_local, metas_local
+
     embedder = OllamaEmbeddingClient()
-    ids = [d.doc_id for d in to_update]
-    texts = [d.text for d in to_update]
-    metas = [{
-        "source_role": d.source_role,
-        "story_id": d.story_id,
-        "slice_id": d.slice_id,
-        "chapter_timestamp": d.chapter_timestamp,
-        "content_hash": d.content_hash, # 存储哈希
-    } for d in to_update]
-    
+    ids, texts, metas = _payload(to_update)
     embeddings = embedder.embed_texts(texts)
-    
-    collection.upsert(
-        ids=ids,
-        documents=texts,
-        metadatas=metas,
-        embeddings=embeddings
-    )
-    return len(to_update)
+
+    try:
+        collection.upsert(
+            ids=ids,
+            documents=texts,
+            metadatas=metas,
+            embeddings=embeddings
+        )
+        return len(to_update)
+    except Exception as exc:
+        # 当 embedding 模型切换导致维度不一致时，重建 collection 后全量重建索引。
+        if "expecting embedding with dimension" not in str(exc).lower():
+            raise
+
+        collection = _reset_collection()
+        ids, texts, metas = _payload(all_docs)
+        embeddings = embedder.embed_texts(texts)
+        collection.upsert(
+            ids=ids,
+            documents=texts,
+            metadatas=metas,
+            embeddings=embeddings
+        )
+        return len(all_docs)
 
 
 async def format_role_rag_context_async(
@@ -182,11 +212,10 @@ def persist_generated_role_slice(
     content: str,
 ) -> Path:
     story_key = _normalize_story_id(story_id)
-    dest_dir = MEMORY_DIR / role_id
+    dest_dir = OPT_STORIES_DIR / story_key / role_id
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    slice_id = f"{story_key}__chapter_{chapter_timestamp}_run{run_id}"
-    file_path = dest_dir / f"{slice_id}.md"
+    file_path = dest_dir / f"chapter_{chapter_timestamp}_run{run_id}.md"
 
     header = (
         f"Story ID: {story_key}\n"
