@@ -23,6 +23,7 @@ OPT_STORIES_DIR.mkdir(parents=True, exist_ok=True)
 
 # 数据库路径
 SQLITE_DB_PATH = DATA_DIR / "story_teller.db"
+METADATA_DB_PATH = DATA_DIR / "metadata.db"
 CHROMA_DIR = DATA_DIR / "rag_chroma"
 
 # --- 模型服务配置 (Ollama) ---

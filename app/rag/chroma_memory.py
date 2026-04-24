@@ -16,6 +16,18 @@ from app.config import (
     RAG_TOP_K,
 )
 from app.rag.ollama_embedding import OllamaEmbeddingClient
+from app.metadata_store import upsert_chunk
+from app.metadata_extractor import extract_chunks_from_markdown
+
+
+def sync_metadata_for_file(file_path: Path):
+    """提取文件元数据并更新到 SQLite。"""
+    try:
+        chunks = extract_chunks_from_markdown(file_path)
+        for chunk in chunks:
+            upsert_chunk(chunk)
+    except Exception as e:
+        print(f"Error syncing metadata for {file_path}: {e}")
 
 
 @dataclass(frozen=True)
@@ -72,6 +84,8 @@ def load_memory_documents(roles: list[str]) -> list[MemoryDocument]:
                 chapter_timestamp=ts,
                 content_hash=_compute_hash(text)
             ))
+            # [v0.3] 同步到元数据数据库
+            sync_metadata_for_file(file_path)
     return documents
 
 
@@ -216,14 +230,23 @@ def index_established_facts(
     facts_text: str,
     world_bible: str = "",
 ) -> int:
-    """[v0.3] 将既定事实时间线和世界观设定索引到向量库。
-
-    目的：角色视角生成时通过 RAG 检索这些内容作为客观锚点，
-    而非依赖其他角色尚未完成的叙事切片，从根本上避免循环引用和逻辑矛盾。
-
-    返回实际写入的文档数量。
-    """
+    """[v0.3] 将既定事实时间线和世界观设定索引到文件、元数据和向量库。"""
     story_key = _normalize_story_id(story_id)
+    
+    # 1. 物理落盘
+    facts_dir = OPT_STORIES_DIR / story_key / "facts"
+    facts_dir.mkdir(parents=True, exist_ok=True)
+    
+    facts_path = facts_dir / f"facts_run{run_id}.md"
+    facts_path.write_text(f"---\nStory ID: {story_key}\nRole ID: __facts__\nNarrative Type: fact\n---\n{facts_text}", encoding="utf-8")
+    sync_metadata_for_file(facts_path)
+    
+    if world_bible:
+        world_path = facts_dir / f"world_run{run_id}.md"
+        world_path.write_text(f"---\nStory ID: {story_key}\nRole ID: __world__\nNarrative Type: world\n---\n{world_bible}", encoding="utf-8")
+        sync_metadata_for_file(world_path)
+
+    # 2. 写入向量库 (Chroma)
     collection = _get_collection()
     embedder = OllamaEmbeddingClient()
 
@@ -358,4 +381,8 @@ def persist_generated_role_slice(
         "---\n"
     )
     file_path.write_text(header + content.strip(), encoding="utf-8")
+    
+    # [v0.3] 写入后立即提取元数据
+    sync_metadata_for_file(file_path)
+    
     return file_path

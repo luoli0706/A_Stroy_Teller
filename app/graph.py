@@ -16,14 +16,14 @@ from app.config import (
 )
 from app.llm_client import get_story_client
 from app.rag.chroma_memory import (
-    format_role_rag_context_async,
-    format_facts_rag_context_async,
     index_memory_directory,
     index_established_facts,
     persist_generated_role_slice,
 )
+from app.retrieval_tools import hybrid_search_async
 from app.role_memory import discover_roles, load_role_assets
 from app.sqlite_store import init_db, insert_story_run, upsert_role_asset
+from app.metadata_store import init_metadata_db
 from app.state import StoryState, RoleStoryIdentity, QualityReport
 from app.observability import log_event
 
@@ -46,6 +46,7 @@ async def robust_task(coro, role_id: str, node_name: str, state: StoryState):
 async def collect_requirements(state: StoryState) -> Dict[str, Any]:
     log_event(state.logger_name, f"Node Start: collect_requirements | Topic: {state.topic}")
     init_db(str(SQLITE_DB_PATH))
+    init_metadata_db()
     get_story_client().assert_ready()
     roles = state.roles if state.roles else discover_roles(str(ROLE_DIR))
     return {
@@ -189,29 +190,24 @@ async def adapt_roles_to_framework(state: StoryState) -> Dict[str, Any]:
 async def retrieve_role_rag_contexts(state: StoryState) -> Dict[str, Any]:
     """[v0.3] 为每个角色检索 RAG 上下文。
 
-    新策略：优先从既定事实和世界观（format_facts_rag_context_async）检索，
-    而非从其他角色的记忆切片检索，确保各角色视角生成的基础是客观事实而非
-    其他角色可能尚未完成或存在主观偏差的叙事片段。
-    若既定事实尚未索引（如首次运行或 RAG 禁用），则回退到旧的角色记忆检索。
+    新策略：使用 hybrid_search_async 统一检索。
+    混合检索将同时覆盖该角色的专属记忆以及代表客观锚点的既定事实 (__facts__) 和世界观 (__world__)。
     """
-    log_event(state.logger_name, "Node Start: retrieve_role_rag_contexts")
+    log_event(state.logger_name, "Node Start: retrieve_role_rag_contexts (Hybrid)")
     if not state.rag_enabled:
         return {"rag_role_contexts": {}}
 
     query_text = f"Topic: {state.topic}"
-
-    if state.established_facts:
-        # [v0.3] 主路径：从既定事实和世界观检索
-        tasks = [
-            format_facts_rag_context_async(state.story_id, rid, query_text, state.rag_top_k)
-            for rid in state.roles
-        ]
-    else:
-        # 回退路径：兼容旧版，从角色记忆切片检索
-        tasks = [
-            format_role_rag_context_async(state.story_id, rid, state.roles, query_text, state.rag_top_k)
-            for rid in state.roles
-        ]
+    
+    tasks = []
+    for rid in state.roles:
+        # 为每个角色检索：私有记忆 + 既定事实 + 世界观
+        tasks.append(hybrid_search_async(
+            state.story_id, 
+            query_text, 
+            filters={"role_id": [rid, "__facts__", "__world__"]},
+            limit=state.rag_top_k
+        ))
 
     results = await asyncio.gather(*tasks)
     return {"rag_role_contexts": dict(zip(state.roles, results))}

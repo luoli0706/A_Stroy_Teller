@@ -1,5 +1,18 @@
 # 代码更新历史 (Code History)
 
+## [v0.3.0-alpha.3] - 2026-04-24
+### 混合 RAG 架构演进 (Hybrid RAG Evolution)
+- **元数据驱动检索**：引入独立的 `metadata.db` (SQLite WAL模式)，实现了 Chunk 级别的元数据索引，支持基于角色、剧情时间锚点、叙事类型的精准物理定位。
+- **并行召回与评分融合**：重构检索引擎，实现了 SQL 精准过滤与 Chroma 语义检索的并行召回，并引入评分权重融合策略，显著提升了跨章剧情的召回率与准确性。
+- **强一致性落盘机制 (Sequential Write-through)**：重写持久化逻辑，确保剧情生成落盘的同时，索引数据自动同步到 SQLite 与向量库，且支持冷启动时的元数据自愈。
+- **智能分块读取 (Smart Read with Citation)**：开发了基于字节偏移的物理文件精准读取工具，支持带来源引用的片段输出，有效缓解了 LLM 的上下文压力并大幅降低了幻觉。
+
+### 核心逻辑重构 (Logic Refactoring)
+- **RAG 节点演进**：`retrieve_role_rag_contexts` 节点完全接入混合检索路径，角色生成时自动参考“自身记忆 + 客观事实 (__facts__) + 世界观 (__world__)”，彻底消除了之前的角色记忆循环依赖。
+- **健壮性增强**：实现了 `metadata_extractor.py`，具备鲁棒的 Markdown Front Matter 解析能力，并修复了在处理异常格式文件时的越界错误。
+
+---
+
 ## [v0.1.0-alpha.2.5] - 2026-04-03 (Patch 1)
 ### 后端内核加固 (Backend Hardening)
 - **异步持久化升级**：完成从同步 `SqliteSaver` 到 `AsyncSqliteSaver` 的迁移，完美适配全链路 `async/await` 架构。
