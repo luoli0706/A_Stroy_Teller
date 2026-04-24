@@ -1,48 +1,52 @@
-# A Story Teller / 智能故事生成系统 (Alpha 2.5)
+# A Story Teller / 智能故事生成系统 (v0.3.1)
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![LangGraph](https://img.shields.io/badge/Orchestration-LangGraph-orange.svg)](https://github.com/langchain-ai/langgraph)
 
-**A Story Teller** 是一个以角色为中心、多视角协同创作、具备全链路持久化能力的智能故事生成系统。它不仅能生成故事，更能模拟一个由多名“演员”组成的剧组，在不同的故事题材中进行深度演绎。
+**A Story Teller** 是一个以角色为中心、多视角协同创作、具备全链路持久化能力的智能故事生成系统。系统输入“故事框架 + 多角色模板”，基于 LangGraph 和混合索引 RAG 生成高一致性的多角色故事。
 
 ---
 
-## 🌟 核心特性
+## 核心特性
 
-### 1. 🎭 演员扮演架构 (Roleplay Engine)
-*   **角色与背景解耦**：角色不再是剧本的附属品，而是拥有独立“演员设定”（身高、性格、语调）的实体。
-*   **动态身份适配**：演员入驻《都市侦探》或《冰风之行》时，会根据自身本性自动演化出对应的职业技能与剧情目标。
-*   **关系网编织**：系统自动推演演员间的社交矩阵（信任、竞争、暗流），使多视角叙事具备真实的人际张力。
+### 1. 角色槽位映射与身份适配
+- **框架槽位映射**：根据故事框架将多个角色模板分配到对应剧情槽位。
+- **动态身份适配**：角色保留核心性格，并在当前故事框架中生成临时身份与目标。
+- **关系矩阵生成**：在多角色视角生成前构建关系网，提升角色互动一致性。
 
-### 2. ⚡ 高性能异步流水线 (Async Pipeline)
-*   **全异步架构**：基于 LangGraph Async 构建，消除 I/O 阻塞。
-*   **并行生成加速**：多名角色的视角叙事采用并发调用，在大模型推理吞吐允许的情况下，效率较原型提升 400%。
+### 2. LangGraph 全链路编排
+- **全异步状态图**：核心流程由 `StateGraph` 驱动，支持节点级流式事件输出。
+- **并行角色生成**：角色适配与视角生成支持并发执行，减少总时延。
+- **质量回路**：支持质量检查与条件路由重试。
 
-### 3. 💾 工业级持久化保险丝 (Persistence)
-*   **节点级快照**：内置 `AsyncSqliteSaver`。生成过程中的每一步（大纲、适配、视角、整合）都会自动保存。
-*   **无畏中断**：如遇停电或模型崩溃，通过相同的 `Thread ID` 重新启动，系统将秒级找回进度并继续创作。
+### 3. 既定事实锚点 + 混合 RAG
+- **事实锚点机制**：先从全局大纲抽取 `established_facts` 与 `world_bible`，再用于后续角色生成与章节整合。
+- **混合检索**：结合 Chroma 语义检索与 SQLite 元数据过滤，实现“角色私有记忆 + 客观事实”联合召回。
+- **增量索引**：基于内容哈希，仅对变更切片做增量更新。
 
-### 4. 🧠 记忆蒸馏与 RAG (Smart Memory)
-*   **增量索引技术**：基于 SHA-256 哈希校验，仅索引变更内容，彻底解决冷启动时的预处理耗时。
-*   **精准语境召回**：通过 `story_id` 元数据过滤，确保角色在不同剧本间拥有清晰的记忆边界。
+### 4. 持久化与可追溯性
+- **节点快照**：`AsyncSqliteSaver` 持久化图状态，可用于历史回溯与续跑验证。
+- **统一产物协议**：事实文件、角色切片与最终故事均按统一头部字段落盘。
+- **运行记录闭环**：预分配 `run_id` 并在收尾阶段回写，确保索引与产物编号一致。
 
 ---
 
-## 🛠️ 技术栈
+## 技术栈
 
 | 模块 | 选型 |
 | :--- | :--- |
-| **调度内核** | LangGraph (Async StateGraph) |
+| **调度内核** | LangGraph (Async StateGraph + Checkpoint) |
 | **模型推理** | Ollama (本地私有化部署) |
-| **向量检索** | ChromaDB (原生加速核心) |
+| **向量检索** | ChromaDB |
+| **结构检索** | SQLite Metadata (`metadata.db`) |
 | **数据模型** | Pydantic V2 (强类型校验) |
 | **前端交互** | Flet (响应式三栏布局) |
 | **底层通信** | HTTPX (全链路异步) |
 
 ---
 
-## 🚀 快速开始
+## 快速开始
 
 ### 1. 环境安装
 ```bash
@@ -55,33 +59,38 @@ pip install -r requirements.txt
 确保本地 [Ollama](https://ollama.com/) 已启动，并拉取所需模型：
 ```bash
 ollama pull qwen3.5:9b
-ollama pull nomic-embed-text
+ollama pull nomic-embed-text-v2-moe
 ```
 
 ### 3. 运行应用
 ```bash
-# 启动 UI 界面
+# 启动 UI
 python UI/flet_app.py
 
-# 或运行自动化测试脚本产出故事
-python -m unittest tests/test_v025_integration.py
+# 运行 v0.3 全流程集成测试
+python -m unittest tests/test_v030_full_pipeline.py
+
+# CLI 运行示例
+python -m app.main --story-id cat_world --roles Reshaely,VanlyShan,SolinXuan --stream
 ```
 
 ---
 
-## 📂 项目结构
+## 项目结构
 ```text
-├── app/                # 核心逻辑 (图编排、LLM客户端、RAG引擎)
+├── app/                # 核心逻辑 (图编排、LLM 客户端、混合 RAG)
 ├── UI/                 # 组件化表现层
 ├── stories/            # 故事框架模板库
-├── role/               # 演员通用设定集
+├── role/               # 角色模板
 ├── memory/             # 角色跨剧本长期记忆
 ├── opt/                # 最终故事与归档产物
 └── docs/               # 详细的技术与功能演进历史
 ```
 
-## 📝 开发者说明
-本系统处于 Alpha 阶段，初期测试显示在 **逻辑一致性** 与 **多视角碰撞** 上具有显著优势。欢迎参与 UGC 演员设定或故事框架的贡献。
+## 开发者说明
+- 当前版本：`v0.3.1`
+- 版本演进：参见 `docs/code_history.md` 与 `docs/func_history.md`
+- 仍在持续改进项：长链路流式稳定性、断点续写自动恢复验证、Pydantic 新 API 迁移
 
 ## 许可证
 Apache License 2.0

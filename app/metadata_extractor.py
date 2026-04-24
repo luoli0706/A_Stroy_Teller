@@ -78,11 +78,16 @@ def extract_chunks_from_markdown(file_path: Path) -> List[Dict[str, Any]]:
 
     for idx, (c_start, c_end, content) in enumerate(raw_chunks):
         chunk_hash = _compute_hash(content)
-        # 组合 ID: 文件名 + 块序号
-        chunk_id = f"{file_path.stem}_ch{idx}"
+        
+        rid = file_metadata.get("role_id", "unknown")
+        sid = file_metadata.get("story_id", "unknown")
+        
+        # [v0.3.0] 组合 ID 确保全局唯一：故事ID + 角色ID + 文件名 + 块序号
+        chunk_id = f"{sid}_{rid}_{file_path.stem}_ch{idx}"
         
         # 尝试从第一行标题提取 chapter_id
-        first_line = content.splitlines()[0]
+        lines = content.splitlines()
+        first_line = lines[0] if lines else ""
         chapter_id_match = re.search(r'Chapter (\d+)', first_line, re.I)
         chapter_id = chapter_id_match.group(1) if chapter_id_match else (file_metadata.get("chapter_timestamp") or f"idx_{idx}")
 

@@ -1,5 +1,24 @@
 # 代码更新历史 (Code History)
 
+## [v0.3.1] - 2026-04-24
+### 运行时与持久化一致性修复 (Runtime & Persistence Consistency)
+- **Run ID 生命周期重构**：在 `collect_requirements` 阶段引入 `create_placeholder_run` 预分配 `run_id`，并在 `finalize_output` 使用 `update_story_run` 回写结果，消除既定事实索引与最终产物 `run_id` 不一致的问题。
+- **同步运行入口补齐**：`runtime.py` 新增 `run_story` 与 `stream_story_events` 同步封装，修复 CLI 入口调用与异步实现之间的接口断层。
+- **健康检查治理**：`llm_client.assert_ready` 不再吞异常，新增同步 `health_check` 封装以统一主入口可用性检查路径。
+
+### RAG 与元数据协议收敛 (RAG & Metadata Protocol Alignment)
+- **Chunk 全局唯一键**：`metadata_extractor` 的 `chunk_id` 升级为 `story_id + role_id + file_stem + chunk_index`，降低跨故事/跨角色碰撞风险。
+- **增量索引去重键修正**：`chroma_memory.index_memory_directory` 从 `slice_id` 对比改为 `doc_id(role::slice)` 对比，避免跨角色同名切片误判。
+- **Front Matter 标准化**：事实文件、世界观文件、角色切片统一采用 `---` 包裹并使用 `snake_case` 字段名（如 `story_id`、`role_id`、`run_id`）。
+- **Header 兼容解析增强**：`_parse_header` 同时兼容旧版无分隔头和新版标准 front matter，并统一 key 规范。
+- **向量过滤表达式规范化**：`retrieval_tools` 中 Chroma 检索过滤改为 `$and` 组合构建，提高多条件过滤可读性与扩展性。
+
+### 类型安全与测试回归 (Type Safety & Test Regression)
+- **Pydantic 可变默认值修复**：`StoryState`、`RoleStoryIdentity`、`QualityReport` 全面改为 `Field(default_factory=...)`，减少共享可变默认值带来的隐患。
+- **全流程测试更新**：`test_v030_full_pipeline.py` 对齐新 `run_id` 策略与头部字段命名，并增强日志采集，提升长链路调试可追溯性。
+
+---
+
 ## [v0.3.0-alpha.3] - 2026-04-24
 ### 混合 RAG 架构演进 (Hybrid RAG Evolution)
 - **元数据驱动检索**：引入独立的 `metadata.db` (SQLite WAL模式)，实现了 Chunk 级别的元数据索引，支持基于角色、剧情时间锚点、叙事类型的精准物理定位。

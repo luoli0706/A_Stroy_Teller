@@ -96,13 +96,15 @@ def hybrid_search(story_id: str, query: str, filters: Dict[str, Any] = None, lim
         story_key = story_id.strip().replace(" ", "_")
         
         # 构造 Chroma filter
-        where_filter = {"story_id": story_key}
+        conditions = [{"story_id": story_key}]
         if filters and "role_id" in filters:
             role_val = filters["role_id"]
             if isinstance(role_val, list):
-                where_filter["source_role"] = {"$in": role_val}
+                conditions.append({"source_role": {"$in": role_val}})
             else:
-                where_filter["source_role"] = role_val
+                conditions.append({"source_role": role_val})
+        
+        where_filter = conditions[0] if len(conditions) == 1 else {"$and": conditions}
 
         try:
             res = collection.query(

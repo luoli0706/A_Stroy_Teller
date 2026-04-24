@@ -37,6 +37,7 @@ import unittest
 from pathlib import Path
 
 from app.runtime import build_input_state, get_thread_history_async, stream_story_events_async
+from app.observability import create_run_logger, log_event
 
 # ── 可通过环境变量调整的阈值 ──────────────────────────────────────────────────
 _MIN_FINAL_CHARS = int(os.getenv("TEST_MIN_FINAL_STORY_CHARS", "1500"))
@@ -93,19 +94,18 @@ class TestV030FullPipeline(unittest.IsolatedAsyncioTestCase):
     FRAMEWORK_KEYWORDS = ["星绒乐园", "裂隙", "星绒能量"]
     # cat_world 主题关键词（用于断言最终故事与主题相关）
     TOPIC_KEYWORDS = ["星绒", "裂隙"]
-    # index_facts_for_rag 节点在 finalize_output（真正的 run_id 分配点）之前执行，
-    # 因此其写入的物理文件名始终使用 run_id=0（见 graph.py index_facts_for_rag 实现）。
-    _FACTS_RUN_ID = 0
     # persist_generated_role_slice 为角色视角文件添加的命名前缀（见 chroma_memory.py）。
     _ROLE_FILE_PREFIX = "chapter_"
 
     async def test_v030_full_pipeline(self):
         thread_id = f"v030_pipeline_{int(time.time())}"
+        logger, log_path = create_run_logger()
 
-        print(f"\n[v0.3 TEST START] thread_id={thread_id}")
-        print(f"  story_id : {self.STORY_ID}")
-        print(f"  roles    : {self.ROLES}")
-        print(f"  topic    : {self.TOPIC}")
+        logger.info(f"[v0.3 TEST START] thread_id={thread_id}")
+        logger.info(f"  story_id : {self.STORY_ID}")
+        logger.info(f"  roles    : {self.ROLES}")
+        logger.info(f"  topic    : {self.TOPIC}")
+        logger.info(f"  Log file : {log_path}")
 
         state = build_input_state(
             story_id=self.STORY_ID,
@@ -154,12 +154,15 @@ class TestV030FullPipeline(unittest.IsolatedAsyncioTestCase):
                     text = event.get("text") or ""
                     token_chars += len(text)
                     print(text, end="", flush=True)
+                    # 仅在日志中记录非空内容，避免日志文件过于碎片化
+                    if text.strip():
+                        log_event(logger.name, text, level=10) # DEBUG level for tokens
 
                 elif etype == "node_update":
                     node = event.get("node")
                     data = event.get("data", {})
                     nodes_completed.append(node)
-                    print(f"\n  [NODE-DONE]  {node}")
+                    logger.info(f"\n  [NODE-DONE]  {node}")
 
                     if node == "load_story_framework":
                         loaded_story_id = data.get("story_id", "")
@@ -331,22 +334,20 @@ class TestV030FullPipeline(unittest.IsolatedAsyncioTestCase):
                                 "[v0.3] rag_facts_indexed 字段异常（负值）")
 
         # 验证既定事实物理文件已写入磁盘。
-        # 注意：index_facts_for_rag 在 finalize_output（真正分配 run_id 的节点）之前执行，
-        # 因此使用 _FACTS_RUN_ID=0，与 graph.py 的 `run_id = state.run_id or 0` 保持一致。
         from app.config import OPT_STORIES_DIR
         facts_dir = OPT_STORIES_DIR / self.STORY_ID / "facts"
-        facts_file = facts_dir / f"facts_run{self._FACTS_RUN_ID}.md"
+        facts_file = facts_dir / f"facts_run{run_id}.md"
         self.assertTrue(facts_file.exists(),
                         f"[v0.3] 既定事实文件未落盘: {facts_file}")
 
         facts_content = facts_file.read_text(encoding="utf-8")
-        self.assertIn("Story ID:", facts_content,
-                      "[v0.3] 既定事实文件缺少 Story ID 头部信息")
+        self.assertIn("story_id:", facts_content,
+                      "[v0.3] 既定事实文件缺少 story_id 头部信息")
         self.assertIn(self.STORY_ID, facts_content,
                       "[v0.3] 既定事实文件的 story_id 与预期不符")
 
         if world_bible.strip():
-            world_file = facts_dir / f"world_run{self._FACTS_RUN_ID}.md"
+            world_file = facts_dir / f"world_run{run_id}.md"
             self.assertTrue(world_file.exists(),
                             f"[v0.3] world_bible 非空但文件未落盘: {world_file}")
 

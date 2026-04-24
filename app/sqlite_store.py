@@ -37,6 +37,33 @@ def init_db(db_path: str = str(DEFAULT_DB_PATH)):
     finally:
         conn.close()
 
+def create_placeholder_run(topic: str, style: str, roles_json: str, db_path: str) -> int:
+    """在流程开始时创建一个占位符运行记录，以便获取 run_id。"""
+    conn = _get_conn(db_path)
+    try:
+        with conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO story_runs (topic, style, roles_json, integrated_draft, final_story) VALUES (?, ?, ?, ?, ?)",
+                (topic, style, roles_json, "PENDING", "PENDING")
+            )
+            return cursor.lastrowid
+    finally:
+        conn.close()
+
+def update_story_run(run_id: int, integrated_draft: str, final_story: str, db_path: str):
+    """更新最终的故事结果。"""
+    conn = _get_conn(db_path)
+    try:
+        with conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE story_runs SET integrated_draft = ?, final_story = ? WHERE id = ?",
+                (integrated_draft, final_story, run_id)
+            )
+    finally:
+        conn.close()
+
 def insert_story_run(topic: str, style: str, roles_json: str, integrated_draft: str, final_story: str, db_path: str) -> int:
     conn = _get_conn(db_path)
     try:

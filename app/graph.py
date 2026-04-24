@@ -22,7 +22,9 @@ from app.rag.chroma_memory import (
 )
 from app.retrieval_tools import hybrid_search_async
 from app.role_memory import discover_roles, load_role_assets
-from app.sqlite_store import init_db, insert_story_run, upsert_role_asset
+from app.sqlite_store import (
+    init_db, create_placeholder_run, update_story_run, upsert_role_asset
+)
 from app.metadata_store import init_metadata_db
 from app.state import StoryState, RoleStoryIdentity, QualityReport
 from app.observability import log_event
@@ -49,8 +51,14 @@ async def collect_requirements(state: StoryState) -> Dict[str, Any]:
     init_metadata_db()
     get_story_client().assert_ready()
     roles = state.roles if state.roles else discover_roles(str(ROLE_DIR))
+    
+    # [v0.3.0] 提前生成 run_id 以供后续索引使用
+    run_id = create_placeholder_run(state.topic, state.style, json.dumps(roles), str(SQLITE_DB_PATH))
+    log_event(state.logger_name, f"Created placeholder run, run_id={run_id}")
+    
     return {
         "roles": roles,
+        "run_id": run_id,
         "max_retry": state.max_retry or MAX_RETRY,
         "rag_enabled": state.rag_enabled if state.rag_enabled is not None else RAG_ENABLED,
         "rag_top_k": state.rag_top_k or RAG_TOP_K
@@ -105,12 +113,7 @@ async def plan_global_story(state: StoryState) -> Dict[str, Any]:
 
 
 async def generate_established_facts(state: StoryState) -> Dict[str, Any]:
-    """[v0.3] 从全局大纲提炼既定事实时间线与世界观设定。
-
-    这是新策略的核心节点：产出两类权威内容——
-    1. established_facts：按时间线排列的客观事件，所有角色视角必须与之相符。
-    2. world_bible：世界观/背景设定，从框架和大纲中提炼，供 RAG 检索使用。
-    """
+    """[v0.3] 从全局大纲提炼既定事实时间线与世界观设定。"""
     log_event(state.logger_name, "Node Start: generate_established_facts (Extracting story ground truth...)")
     client = get_story_client()
     raw = await client.generate_established_facts_async(
@@ -118,8 +121,6 @@ async def generate_established_facts(state: StoryState) -> Dict[str, Any]:
     )
 
     # 将 LLM 输出切分为 established_facts 和 world_bible 两段
-    facts_marker = "## ESTABLISHED FACTS"
-    world_marker = "## WORLD BIBLE"
     facts_text = ""
     world_text = ""
 
@@ -272,7 +273,8 @@ def route_after_quality(state: StoryState) -> str:
 async def finalize_output(state: StoryState) -> Dict[str, Any]:
     log_event(state.logger_name, "Node Start: finalize_output (Persisting Results...)")
     final_story = state.integrated_draft
-    run_id = insert_story_run(state.topic, state.style, json.dumps(state.roles), final_story, final_story, str(SQLITE_DB_PATH))
+    run_id = state.run_id
+    update_story_run(run_id, final_story, final_story, str(SQLITE_DB_PATH))
     
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     role_story_paths = {}

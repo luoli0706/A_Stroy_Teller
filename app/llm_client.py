@@ -66,20 +66,24 @@ class OllamaStoryClient:
         return {"ok": True, "message": "Ollama 健康检查通过。"}
 
     def assert_ready(self) -> None:
+        """确保 Ollama 服务和所需模型已就绪。"""
+        # 如果已有循环在运行，则跳过 asyncio.run 以免冲突
         try:
-            # 如果已有循环在运行，则跳过 asyncio.run
-            try:
-                loop = asyncio.get_running_loop()
-                if loop.is_running():
-                    return
-            except RuntimeError:
-                pass
-
-            res = asyncio.run(self.health_check_async())
-            if not res["ok"]:
-                raise RuntimeError(res["message"])
-        except Exception:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                # 这种情况下我们无法简单地进行异步健康检查并抛出异常，
+                # 但在 LangGraph 节点内部，我们可以直接调用 health_check_async。
+                return
+        except RuntimeError:
             pass
+
+        res = asyncio.run(self.health_check_async())
+        if not res["ok"]:
+            raise RuntimeError(res["message"])
+
+    def health_check(self) -> Any:
+        """同步健康检查封装。"""
+        return asyncio.run(self.health_check_async())
 
     async def _chat_async(
         self,

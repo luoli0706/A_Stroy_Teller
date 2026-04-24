@@ -50,12 +50,28 @@ def _normalize_story_id(story_id: str) -> str:
 
 
 def _parse_header(text: str) -> dict[str, str]:
+    """解析 Markdown 文件头部的 Key: Value 格式信息。支持 --- 分隔符。"""
     header = {}
-    lines = text.splitlines()[:15]
-    for line in lines:
+    lines = text.splitlines()
+    header_lines = []
+    
+    if lines and lines[0].strip() == "---":
+        for line in lines[1:]:
+            if line.strip() == "---":
+                break
+            header_lines.append(line)
+    else:
+        # 兼容没有 --- 的旧格式，读取前 15 行
+        header_lines = lines[:15]
+
+    for line in header_lines:
         if ":" in line:
-            key, val = line.split(":", 1)
-            header[key.strip().lower()] = val.strip()
+            parts = line.split(":", 1)
+            if len(parts) == 2:
+                key, val = parts
+                # 统一为小写并用下划线替换空格
+                k = key.strip().lower().replace(" ", "_")
+                header[k] = val.strip()
     return header
 
 
@@ -72,14 +88,18 @@ def load_memory_documents(roles: list[str]) -> list[MemoryDocument]:
             header = _parse_header(text)
             slice_id = file_path.stem
             
-            story_id = header.get("story id") or (slice_id.split("__")[0] if "__" in slice_id else "legacy")
-            ts = header.get("chapter timestamp") or ("legacy")
+            # 优先从 header 获取，支持 story_id (标准) 和 story id (兼容)
+            sid = header.get("story_id") or header.get("story id")
+            if not sid:
+                sid = slice_id.split("__")[0] if "__" in slice_id else "legacy"
+                
+            ts = header.get("chapter_timestamp") or header.get("chapter timestamp") or "legacy"
 
             documents.append(MemoryDocument(
                 doc_id=f"{role_id}::{slice_id}",
                 text=text,
                 source_role=role_id,
-                story_id=_normalize_story_id(story_id),
+                story_id=_normalize_story_id(sid),
                 slice_id=slice_id,
                 chapter_timestamp=ts,
                 content_hash=_compute_hash(text)
@@ -116,9 +136,10 @@ def index_memory_directory(roles: list[str]) -> int:
     # 获取现有 Metadata 以便比对 Hash
     try:
         existing = collection.get(include=["metadatas"])
+        # [v0.3.0] 使用 doc_id (role::slice) 作为唯一键，而非 slice_id
         existing_hashes = {
-            meta.get("slice_id"): meta.get("content_hash") 
-            for meta in existing.get("metadatas", [])
+            doc_id: meta.get("content_hash") 
+            for doc_id, meta in zip(existing.get("ids", []), existing.get("metadatas", []))
         }
     except:
         existing_hashes = {}
@@ -126,7 +147,7 @@ def index_memory_directory(roles: list[str]) -> int:
     # 筛选真正需要更新的文档
     to_update = [
         d for d in all_docs 
-        if existing_hashes.get(d.slice_id) != d.content_hash
+        if existing_hashes.get(d.doc_id) != d.content_hash
     ]
 
     if not to_update:
@@ -238,12 +259,18 @@ def index_established_facts(
     facts_dir.mkdir(parents=True, exist_ok=True)
     
     facts_path = facts_dir / f"facts_run{run_id}.md"
-    facts_path.write_text(f"---\nStory ID: {story_key}\nRole ID: __facts__\nNarrative Type: fact\n---\n{facts_text}", encoding="utf-8")
+    facts_path.write_text(
+        f"---\nstory_id: {story_key}\nrole_id: __facts__\nnarrative_type: fact\nrun_id: {run_id}\n---\n{facts_text}", 
+        encoding="utf-8"
+    )
     sync_metadata_for_file(facts_path)
     
     if world_bible:
         world_path = facts_dir / f"world_run{run_id}.md"
-        world_path.write_text(f"---\nStory ID: {story_key}\nRole ID: __world__\nNarrative Type: world\n---\n{world_bible}", encoding="utf-8")
+        world_path.write_text(
+            f"---\nstory_id: {story_key}\nrole_id: __world__\nnarrative_type: world\nrun_id: {run_id}\n---\n{world_bible}", 
+            encoding="utf-8"
+        )
         sync_metadata_for_file(world_path)
 
     # 2. 写入向量库 (Chroma)
@@ -372,12 +399,13 @@ def persist_generated_role_slice(
     file_path = dest_dir / f"chapter_{chapter_timestamp}_run{run_id}.md"
 
     header = (
-        f"Story ID: {story_key}\n"
-        f"Role ID: {role_id}\n"
-        f"Chapter Timestamp: {chapter_timestamp}\n"
-        f"Run ID: {run_id}\n"
-        f"Topic: {topic}\n"
-        f"Style: {style}\n"
+        "---\n"
+        f"story_id: {story_key}\n"
+        f"role_id: {role_id}\n"
+        f"chapter_timestamp: {chapter_timestamp}\n"
+        f"run_id: {run_id}\n"
+        f"topic: {topic}\n"
+        f"style: {style}\n"
         "---\n"
     )
     file_path.write_text(header + content.strip(), encoding="utf-8")

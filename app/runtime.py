@@ -60,6 +60,42 @@ async def run_story_async(state: StoryState, thread_id: str = "default_thread") 
         return _sanitize_for_json(result)
 
 
+import queue
+import threading
+
+def run_story(state: StoryState, thread_id: str = "default_thread") -> Dict[str, Any]:
+    """同步封装运行故事。"""
+    return asyncio.run(run_story_async(state, thread_id))
+
+
+def stream_story_events(state: StoryState, thread_id: str = "default_thread"):
+    """同步封装流式事件，支持实时消费。"""
+    q = queue.Queue()
+
+    def run_async_loop():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        async def _consume():
+            try:
+                async for event in stream_story_events_async(state, thread_id):
+                    q.put(event)
+            finally:
+                q.put(None) # Sentinel to end iteration
+            
+        loop.run_until_complete(_consume())
+        loop.close()
+
+    # 在后台线程运行异步事件循环
+    threading.Thread(target=run_async_loop, daemon=True).start()
+    
+    while True:
+        event = q.get()
+        if event is None:
+            break
+        yield event
+
+
 async def stream_story_events_async(state: StoryState, thread_id: str = "default_thread") -> AsyncIterator[dict]:
     """
     [v0.2.5 优化版] 使用 astream_events 捕获全链路事件。
