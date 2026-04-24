@@ -45,8 +45,10 @@ _MIN_PARAGRAPHS = int(os.getenv("TEST_MIN_STORY_PARAGRAPHS", "5"))
 _MIN_SENTENCES = int(os.getenv("TEST_MIN_STORY_SENTENCES", "15"))
 _MIN_TOKEN_CHARS = int(os.getenv("TEST_MIN_TOKEN_CHARS", "200"))
 
-# v0.3 链路中必须依次出现的节点（顺序敏感；wait_for_user_outline 为透传节点，不一定
-# 会出现在 node_update 事件中，因此此处列出其前后节点验证顺序连续性即可）
+# v0.3 链路中必须依次出现的节点（顺序敏感）。
+# wait_for_user_outline 是仅返回当前状态的 passthrough 节点，astream_events 不一定为其
+# 产生独立的 on_chain_update 事件，因此从必检节点列表中省略，仅通过其前后节点顺序来
+# 间接验证其位置正确。
 _REQUIRED_NODES_ORDERED = [
     "collect_requirements",
     "load_story_framework",
@@ -91,6 +93,11 @@ class TestV030FullPipeline(unittest.IsolatedAsyncioTestCase):
     FRAMEWORK_KEYWORDS = ["星绒乐园", "裂隙", "星绒能量"]
     # cat_world 主题关键词（用于断言最终故事与主题相关）
     TOPIC_KEYWORDS = ["星绒", "裂隙"]
+    # index_facts_for_rag 节点在 finalize_output（真正的 run_id 分配点）之前执行，
+    # 因此其写入的物理文件名始终使用 run_id=0（见 graph.py index_facts_for_rag 实现）。
+    _FACTS_RUN_ID = 0
+    # persist_generated_role_slice 为角色视角文件添加的命名前缀（见 chroma_memory.py）。
+    _ROLE_FILE_PREFIX = "chapter_"
 
     async def test_v030_full_pipeline(self):
         thread_id = f"v030_pipeline_{int(time.time())}"
@@ -323,10 +330,12 @@ class TestV030FullPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(rag_facts_indexed, 0,
                                 "[v0.3] rag_facts_indexed 字段异常（负值）")
 
-        # 验证既定事实物理文件已写入磁盘（run_id=0，因为索引在 finalize 之前）
+        # 验证既定事实物理文件已写入磁盘。
+        # 注意：index_facts_for_rag 在 finalize_output（真正分配 run_id 的节点）之前执行，
+        # 因此使用 _FACTS_RUN_ID=0，与 graph.py 的 `run_id = state.run_id or 0` 保持一致。
         from app.config import OPT_STORIES_DIR
         facts_dir = OPT_STORIES_DIR / self.STORY_ID / "facts"
-        facts_file = facts_dir / "facts_run0.md"
+        facts_file = facts_dir / f"facts_run{self._FACTS_RUN_ID}.md"
         self.assertTrue(facts_file.exists(),
                         f"[v0.3] 既定事实文件未落盘: {facts_file}")
 
@@ -337,7 +346,7 @@ class TestV030FullPipeline(unittest.IsolatedAsyncioTestCase):
                       "[v0.3] 既定事实文件的 story_id 与预期不符")
 
         if world_bible.strip():
-            world_file = facts_dir / "world_run0.md"
+            world_file = facts_dir / f"world_run{self._FACTS_RUN_ID}.md"
             self.assertTrue(world_file.exists(),
                             f"[v0.3] world_bible 非空但文件未落盘: {world_file}")
 
@@ -447,8 +456,8 @@ class TestV030FullPipeline(unittest.IsolatedAsyncioTestCase):
             role_path = Path(role_story_paths[rid])
             self.assertTrue(role_path.exists(),
                             f"角色 {rid} 视角文件不存在: {role_path}")
-            self.assertTrue(role_path.name.startswith("chapter_"),
-                            f"角色 {rid} 文件名命名规范错误，应以 'chapter_' 开头: {role_path.name}")
+            self.assertTrue(role_path.name.startswith(self._ROLE_FILE_PREFIX),
+                            f"角色 {rid} 文件名命名规范错误，应以 '{self._ROLE_FILE_PREFIX}' 开头: {role_path.name}")
             self.assertEqual(role_path.parent.name, rid,
                              f"角色 {rid} 文件应位于对应角色目录下")
             self.assertEqual(role_path.parent.parent.name, self.STORY_ID,
