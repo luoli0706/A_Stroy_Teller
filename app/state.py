@@ -16,7 +16,7 @@ class QualityReport(BaseModel):
     suggestions: List[str] = []
 
 class StoryState(BaseModel):
-    """[v0.2.3] 基于 Pydantic 的全局状态模型。"""
+    """[v0.3] 基于 Pydantic 的全局状态模型。"""
     
     # --- 输入参数 ---
     story_id: str = "urban_detective"
@@ -30,7 +30,11 @@ class StoryState(BaseModel):
     story_framework: str = ""
     role_assets: Dict[str, Dict[str, str]] = {} # role_id -> {profile, memory}
     global_outline: str = ""
-    
+
+    # [v0.3] 既定事实时间线与世界观：由主线规划衍生，作为角色视角生成的权威参照
+    established_facts: str = ""       # 按时间戳排列的关键事实列表（全角色共享的「客观」事件）
+    world_bible: str = ""             # 世界观与背景设定，从框架 + 大纲中提炼
+
     # 角色映射与适配
     role_mapping: Dict[str, str] = {} # Actor Name -> Slot Name
     role_story_identities: Dict[str, RoleStoryIdentity] = {} # role_id -> Identity Model
@@ -40,10 +44,12 @@ class StoryState(BaseModel):
     rag_enabled: bool = True
     rag_top_k: int = 4
     rag_indexed_docs: int = 0
-    rag_role_contexts: Dict[str, str] = {} # role_id -> context_text
+    rag_facts_indexed: int = 0        # [v0.3] 已索引的既定事实文档数
+    rag_role_contexts: Dict[str, str] = {} # role_id -> context_text（含既定事实检索结果）
 
     # --- 生成产物 ---
     role_view_drafts: Dict[str, str] = {} # role_id -> text
+    story_chapters: List[str] = []    # [v0.3] 按章节整合的故事段落（化解上下文窗口问题）
     integrated_draft: str = ""
     quality_report: Optional[QualityReport] = None
     final_story: str = ""
