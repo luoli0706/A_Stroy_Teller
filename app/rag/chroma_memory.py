@@ -15,7 +15,8 @@ from app.config import (
     MEMORY_DIR,
     RAG_TOP_K,
 )
-from app.rag.ollama_embedding import OllamaEmbeddingClient
+from app.llm.factory import create_embedding_provider
+from app.markdown_utils import parse_markdown_header
 from app.metadata_store import upsert_chunk
 from app.metadata_extractor import extract_chunks_from_markdown
 
@@ -49,30 +50,6 @@ def _normalize_story_id(story_id: str) -> str:
     return (story_id or "default").strip().replace(" ", "_")
 
 
-def _parse_header(text: str) -> dict[str, str]:
-    """解析 Markdown 文件头部的 Key: Value 格式信息。支持 --- 分隔符。"""
-    header = {}
-    lines = text.splitlines()
-    header_lines = []
-    
-    if lines and lines[0].strip() == "---":
-        for line in lines[1:]:
-            if line.strip() == "---":
-                break
-            header_lines.append(line)
-    else:
-        # 兼容没有 --- 的旧格式，读取前 15 行
-        header_lines = lines[:15]
-
-    for line in header_lines:
-        if ":" in line:
-            parts = line.split(":", 1)
-            if len(parts) == 2:
-                key, val = parts
-                # 统一为小写并用下划线替换空格
-                k = key.strip().lower().replace(" ", "_")
-                header[k] = val.strip()
-    return header
 
 
 def load_memory_documents(roles: list[str]) -> list[MemoryDocument]:
@@ -85,7 +62,7 @@ def load_memory_documents(roles: list[str]) -> list[MemoryDocument]:
             text = file_path.read_text(encoding="utf-8").strip()
             if not text:
                 continue
-            header = _parse_header(text)
+            header = parse_markdown_header(text)
             slice_id = file_path.stem
             
             # 优先从 header 获取，支持 story_id (标准) 和 story id (兼容)
@@ -165,7 +142,7 @@ def index_memory_directory(roles: list[str]) -> int:
         } for d in items]
         return ids_local, texts_local, metas_local
 
-    embedder = OllamaEmbeddingClient()
+    embedder = create_embedding_provider()
     ids, texts, metas = _payload(to_update)
     embeddings = embedder.embed_texts(texts)
 
@@ -205,7 +182,7 @@ async def format_role_rag_context_async(
     top_k = top_k or RAG_TOP_K
     story_key = _normalize_story_id(story_id)
     
-    embedder = OllamaEmbeddingClient()
+    embedder = create_embedding_provider()
     query_embeddings = embedder.embed_texts([query_text])
     if not query_embeddings:
         return ""
@@ -275,7 +252,7 @@ def index_established_facts(
 
     # 2. 写入向量库 (Chroma)
     collection = _get_collection()
-    embedder = OllamaEmbeddingClient()
+    embedder = create_embedding_provider()
 
     to_upsert_ids: list[str] = []
     to_upsert_texts: list[str] = []
@@ -338,7 +315,7 @@ async def format_facts_rag_context_async(
     top_k = top_k or RAG_TOP_K
     story_key = _normalize_story_id(story_id)
 
-    embedder = OllamaEmbeddingClient()
+    embedder = create_embedding_provider()
     query_embeddings = embedder.embed_texts([query_text])
     if not query_embeddings:
         return ""

@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from app.metadata_store import query_metadata
-from app.rag.ollama_embedding import OllamaEmbeddingClient
+from app.llm.factory import create_embedding_provider
 from app.config import RAG_TOP_K
 import chromadb
 from app.config import CHROMA_DIR, RAG_COLLECTION_NAME
@@ -87,7 +87,7 @@ def hybrid_search(story_id: str, query: str, filters: Dict[str, Any] = None, lim
     混合检索主函数：并行执行向量检索与 SQL 元数据筛选，并进行融合。
     """
     # 1. 向量检索 (Semantic)
-    embedder = OllamaEmbeddingClient()
+    embedder = create_embedding_provider()
     query_embeddings = embedder.embed_texts([query])
     vector_results = []
     if query_embeddings:

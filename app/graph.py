@@ -1,20 +1,18 @@
 import json
 import logging
-import os
 import asyncio
-import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Dict, Any, List
+from typing import Any, Dict, Generic, TypeVar
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from app.config import (
-    ROLE_DIR, MEMORY_DIR, STORIES_DIR, SQLITE_DB_PATH, 
+    ROLE_DIR, MEMORY_DIR, STORIES_DIR, SQLITE_DB_PATH,
     RAG_ENABLED, RAG_TOP_K, MAX_RETRY, OPT_STORIES_DIR
 )
-from app.llm_client import get_story_client
+from app.llm_client import create_story_client
 from app.rag.chroma_memory import (
     index_memory_directory,
     index_established_facts,
@@ -29,6 +27,19 @@ from app.metadata_store import init_metadata_db
 from app.state import StoryState, RoleStoryIdentity, QualityReport
 from app.observability import log_event
 
+T = TypeVar("T")
+
+
+@dataclass
+class Result(Generic[T]):
+    """简单 Result 类型，用于区分成功值与错误。"""
+    value: T | None = None
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
 
 def _emit_event(state: StoryState, event: dict) -> None:
     # 注意：在 astream_events 模式下，系统会自动捕获 token，
@@ -37,19 +48,20 @@ def _emit_event(state: StoryState, event: dict) -> None:
         state.event_callback(event)
 
 
-async def robust_task(coro, role_id: str, node_name: str, state: StoryState):
+async def robust_task(coro, role_id: str, node_name: str, state: StoryState) -> Result:
     try:
-        return await coro
+        value = await coro
+        return Result(value=value)
     except Exception as e:
         log_event(state.logger_name, f"Error in {node_name} for {role_id}: {str(e)}", logging.ERROR)
-        return f"ERROR: Failed to execute {node_name}. {str(e)}"
+        return Result(error=f"ERROR: Failed to execute {node_name}. {str(e)}")
 
 
 async def collect_requirements(state: StoryState) -> Dict[str, Any]:
     log_event(state.logger_name, f"Node Start: collect_requirements | Topic: {state.topic}")
     init_db(str(SQLITE_DB_PATH))
     init_metadata_db()
-    get_story_client().assert_ready()
+    create_story_client().assert_ready()
     roles = state.roles if state.roles else discover_roles(str(ROLE_DIR))
     
     # [v0.3.0] 提前生成 run_id 以供后续索引使用
@@ -91,7 +103,7 @@ async def index_role_memories_for_rag(state: StoryState) -> Dict[str, Any]:
 
 async def map_roles_to_slots(state: StoryState) -> Dict[str, Any]:
     log_event(state.logger_name, "Node Start: map_roles_to_slots")
-    client = get_story_client()
+    client = create_story_client()
     profiles = {rid: asset.get("profile", "") for rid, asset in state.role_assets.items()}
     mapping_raw = await client.map_roles_to_slots_async(state.roles, profiles, state.story_framework)
     try:
@@ -104,7 +116,7 @@ async def map_roles_to_slots(state: StoryState) -> Dict[str, Any]:
 
 async def plan_global_story(state: StoryState) -> Dict[str, Any]:
     log_event(state.logger_name, "Node Start: plan_global_story (LLM Planning...)")
-    client = get_story_client()
+    client = create_story_client()
     outline = await client.plan_global_story_async(
         state.topic, state.style, state.role_mapping, state.story_framework, state.event_callback
     )
@@ -115,7 +127,7 @@ async def plan_global_story(state: StoryState) -> Dict[str, Any]:
 async def generate_established_facts(state: StoryState) -> Dict[str, Any]:
     """[v0.3] 从全局大纲提炼既定事实时间线与世界观设定。"""
     log_event(state.logger_name, "Node Start: generate_established_facts (Extracting story ground truth...)")
-    client = get_story_client()
+    client = create_story_client()
     raw = await client.generate_established_facts_async(
         state.topic, state.style, state.global_outline, state.role_mapping, state.event_callback
     )
@@ -167,7 +179,7 @@ async def wait_for_user_outline(state: StoryState) -> StoryState:
 
 async def adapt_roles_to_framework(state: StoryState) -> Dict[str, Any]:
     log_event(state.logger_name, "Node Start: adapt_roles_to_framework")
-    client = get_story_client()
+    client = create_story_client()
     tasks = []
     for rid in state.roles:
         profile = state.role_assets.get(rid, {}).get("profile", "")
@@ -177,11 +189,14 @@ async def adapt_roles_to_framework(state: StoryState) -> Dict[str, Any]:
         ))
     results = await asyncio.gather(*tasks)
     identities = {}
-    for rid, res in zip(state.roles, results):
-        try:
-            identities[rid] = RoleStoryIdentity.parse_raw(res)
-        except:
-            identities[rid] = RoleStoryIdentity(story_name=rid, story_personality_manifestation="As usual", story_specific_goal="Explore")
+    for rid, result in zip(state.roles, results):
+        if result.ok and result.value:
+            try:
+                identities[rid] = RoleStoryIdentity.parse_raw(result.value)
+            except Exception:
+                identities[rid] = RoleStoryIdentity(story_name=rid, story_personality_manifestation="As usual", story_specific_goal="Explore")
+        else:
+            identities[rid] = RoleStoryIdentity(story_name=rid, story_personality_manifestation="Fallback", story_specific_goal="Explore")
     
     rel_matrix = await client.generate_relationships_async(state.roles, {r: i.json() for r, i in identities.items()})
     log_event(state.logger_name, "Role identities adapted and relationship matrix generated.")
@@ -216,7 +231,7 @@ async def retrieve_role_rag_contexts(state: StoryState) -> Dict[str, Any]:
 
 async def generate_role_views(state: StoryState) -> Dict[str, Any]:
     log_event(state.logger_name, "Node Start: generate_role_views (Parallel LLM Generation...)")
-    client = get_story_client()
+    client = create_story_client()
     tasks = []
     for rid in state.roles:
         asset = state.role_assets.get(rid, {})
@@ -230,8 +245,12 @@ async def generate_role_views(state: StoryState) -> Dict[str, Any]:
             rid, "generate_role_views", state
         ))
     results = await asyncio.gather(*tasks)
+    # 区分成功/失败结果：失败的角色视角用占位文本
+    role_views = {}
+    for rid, result in zip(state.roles, results):
+        role_views[rid] = result.value if result.ok else f"[{rid} perspective unavailable: {result.error}]"
     log_event(state.logger_name, "All role views generated.")
-    return {"role_view_drafts": dict(zip(state.roles, results))}
+    return {"role_view_drafts": role_views}
 
 
 async def integrate_perspectives(state: StoryState) -> Dict[str, Any]:
@@ -241,7 +260,7 @@ async def integrate_perspectives(state: StoryState) -> Dict[str, Any]:
     利用既定事实作为各章节的锚点，分批次发送给 LLM，有效化解上下文窗口压力。
     """
     log_event(state.logger_name, "Node Start: integrate_perspectives")
-    client = get_story_client()
+    client = create_story_client()
     integrated = await client.integrate_perspectives_async(
         state.topic, state.style, state.role_view_drafts, state.event_callback,
         established_facts=state.established_facts,
@@ -253,7 +272,7 @@ async def integrate_perspectives(state: StoryState) -> Dict[str, Any]:
 
 async def quality_check(state: StoryState) -> Dict[str, Any]:
     log_event(state.logger_name, "Node Start: quality_check")
-    client = get_story_client()
+    client = create_story_client()
     report_raw = await client.quality_check_async(state.global_outline, state.integrated_draft, state.roles, state.event_callback)
     try:
         report = QualityReport.parse_raw(report_raw)

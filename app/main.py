@@ -1,7 +1,8 @@
 import argparse
 import json
 
-from app.llm_client import get_story_client
+from app.config import init_config
+from app.llm_client import create_story_client
 from app.runtime import build_input_state, run_story, stream_story_events
 
 
@@ -37,10 +38,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    init_config()
     args = parse_args()
     roles = [item.strip() for item in args.roles.split(",") if item.strip()]
 
-    health = get_story_client().health_check()
+    health = create_story_client().health_check()
     if not health.ok:
         raise SystemExit(f"Startup health check failed: {health.message}")
 

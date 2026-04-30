@@ -7,7 +7,7 @@ DEFAULT_DB_PATH = Path(".data/story_teller.db")
 def _get_conn(db_path: str):
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    return sqlite3.connect(str(path))
+    return sqlite3.connect(str(path), timeout=30.0)
 
 def init_db(db_path: str = str(DEFAULT_DB_PATH)):
     """初始化数据库表结构。"""

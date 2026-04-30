@@ -3,11 +3,10 @@ import asyncio
 from typing import Any, Dict, List, Optional
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from app.config import init_config, SQLITE_DB_PATH, CHECKPOINT_DB_PATH
 from app.graph import build_graph
 from app.observability import create_run_logger, log_event
 from app.state import StoryState
-from app.config import SQLITE_DB_PATH
-
 
 def build_input_state(
     story_id: str,
@@ -18,6 +17,7 @@ def build_input_state(
     rag_enabled: Optional[bool] = None,
     rag_top_k: Optional[int] = None,
 ) -> StoryState:
+    init_config()
     # 创建具备落盘能力的 logger
     logger, log_file_path = create_run_logger()
     
@@ -53,7 +53,7 @@ def _sanitize_for_json(value: Any) -> Any:
 
 async def run_story_async(state: StoryState, thread_id: str = "default_thread") -> Dict[str, Any]:
     """异步运行故事生成。"""
-    async with AsyncSqliteSaver.from_conn_string(str(SQLITE_DB_PATH)) as saver:
+    async with AsyncSqliteSaver.from_conn_string(str(CHECKPOINT_DB_PATH)) as saver:
         graph = build_graph(checkpointer=saver)
         config = {"configurable": {"thread_id": thread_id}}
         result = await graph.ainvoke(state.model_dump(), config=config)
@@ -100,7 +100,7 @@ async def stream_story_events_async(state: StoryState, thread_id: str = "default
     """
     [v0.2.5 优化版] 使用 astream_events 捕获全链路事件。
     """
-    async with AsyncSqliteSaver.from_conn_string(str(SQLITE_DB_PATH)) as saver:
+    async with AsyncSqliteSaver.from_conn_string(str(CHECKPOINT_DB_PATH)) as saver:
         graph = build_graph(checkpointer=saver)
         config = {"configurable": {"thread_id": thread_id}}
         
@@ -119,6 +119,16 @@ async def stream_story_events_async(state: StoryState, thread_id: str = "default
                             "data": _sanitize_for_json(node_update),
                         }
                 
+                elif kind == "on_chain_end":
+                    node_name = event.get("metadata", {}).get("langgraph_node")
+                    if node_name:
+                        output = event.get("data", {}).get("output", {})
+                        yield {
+                            "event": "node_update",
+                            "node": node_name,
+                            "data": _sanitize_for_json(output),
+                        }
+
                 elif kind == "on_chat_model_stream":
                     content = event.get("data", {}).get("chunk", {}).content
                     if content:
@@ -143,7 +153,7 @@ async def stream_story_events_async(state: StoryState, thread_id: str = "default
 
 
 async def get_thread_history_async(thread_id: str) -> List[Dict[str, Any]]:
-    async with AsyncSqliteSaver.from_conn_string(str(SQLITE_DB_PATH)) as saver:
+    async with AsyncSqliteSaver.from_conn_string(str(CHECKPOINT_DB_PATH)) as saver:
         graph = build_graph(checkpointer=saver)
         config = {"configurable": {"thread_id": thread_id}}
         history = []

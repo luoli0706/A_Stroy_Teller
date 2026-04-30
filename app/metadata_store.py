@@ -5,9 +5,16 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 from app.config import METADATA_DB_PATH
 
+# 允许的 filter key 白名单，防止 SQL 注入
+_ALLOWED_FILTER_KEYS = frozenset({
+    "story_id", "role_id", "run_id", "chapter_id", "scene_id",
+    "time_anchor", "location", "narrative_type", "chunk_id",
+    "content_hash", "parser_version", "source_path",
+})
+
 def _get_conn():
     METADATA_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(METADATA_DB_PATH))
+    conn = sqlite3.connect(str(METADATA_DB_PATH), timeout=30.0)
     # 开启 WAL 模式以提高并发性能
     conn.execute("PRAGMA journal_mode=WAL")
     conn.row_factory = sqlite3.Row
@@ -89,6 +96,8 @@ def query_metadata(filters: Dict[str, Any], limit: int = 20) -> List[Dict[str, A
         where_clauses = []
         params = []
         for key, value in filters.items():
+            if key not in _ALLOWED_FILTER_KEYS:
+                raise ValueError(f"Invalid filter key: {key!r}. Allowed: {sorted(_ALLOWED_FILTER_KEYS)}")
             if value is not None:
                 if isinstance(value, list):
                     placeholders = ", ".join(["?"] * len(value))

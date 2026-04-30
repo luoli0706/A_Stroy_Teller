@@ -4,33 +4,13 @@ from pathlib import Path
 from typing import List, Dict, Any
 import json
 
+from app.markdown_utils import parse_markdown_header
+
 PARSER_VERSION = "v1.0"
 
 def _compute_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-def _parse_front_matter(text: str) -> Dict[str, str]:
-    """解析 Markdown 文件头部的 Key: Value 格式信息。"""
-    metadata = {}
-    # 查找是否有 --- 包裹的 header，或者直接解析前几行
-    lines = text.splitlines()
-    header_lines = []
-    if lines and lines[0].strip() == "---":
-        for line in lines[1:]:
-            if line.strip() == "---":
-                break
-            header_lines.append(line)
-    else:
-        # 兼容没有 --- 的旧格式，读取前 15 行
-        header_lines = lines[:15]
-    
-    for line in header_lines:
-        if ":" in line:
-            parts = line.split(":", 1)
-            if len(parts) == 2:
-                key, val = parts
-                metadata[key.strip().lower().replace(" ", "_")] = val.strip()
-    return metadata
 
 def extract_chunks_from_markdown(file_path: Path) -> List[Dict[str, Any]]:
     """从 Markdown 文件中提取分块及其元数据。"""
@@ -38,7 +18,7 @@ def extract_chunks_from_markdown(file_path: Path) -> List[Dict[str, Any]]:
         return []
         
     full_text = file_path.read_text(encoding="utf-8")
-    file_metadata = _parse_front_matter(full_text)
+    file_metadata = parse_markdown_header(full_text)
     
     # 移除 header 部分以精确定位字节偏移
     body_text = full_text
